@@ -13,6 +13,15 @@ HEADERS = {
 
 session = requests.Session()
 session.headers.update(HEADERS)
+# Fan-out searches run up to 24 concurrent workers; the default 10-connection
+# pool discards connections under that load (slow lookups, warning spam).
+try:
+    from requests.adapters import HTTPAdapter
+    _pool = HTTPAdapter(pool_connections=32, pool_maxsize=32)
+    session.mount("https://", _pool)
+    session.mount("http://", _pool)
+except Exception:
+    pass
 
 
 class Cache:
@@ -2009,17 +2018,32 @@ def search_players(query, teams, timeout=32, max_workers=24):
                 if remain <= 0:
                     break
             done, pending = wait(pending, timeout=max(0.15, remain), return_when=FIRST_COMPLETED)
-            hits_now = [p for p in index.values() if _name_matches_query(p.get("name"), p.get("team"), q)]
+            # Workers mutate `index` concurrently — iterate a snapshot under the
+            # lock or CPython raises "dictionary changed size during iteration".
+            with lock:
+                hits_now = [
+                    p for p in list(index.values())
+                    if _name_matches_query(p.get("name"), p.get("team"), q)
+                ]
             if specific and hits_now:
                 if extra_until is None:
                     extra_until = time.time() + 2.2
+            elif hits_now:
+                # Some hits already exist: give a short grace window to collect
+                # a few more rosters, then answer — don't scan all ~60 teams.
+                if extra_until is None:
+                    extra_until = time.time() + 0.8
             if named_ids and hits_now and not specific:
                 extra_until = time.time() + 0.4
         complete = not pending
     finally:
         ex.shutdown(wait=False, cancel_futures=True)
 
-    hits = [p for p in index.values() if _name_matches_query(p.get("name"), p.get("team"), q)]
+    with lock:
+        hits = [
+            p for p in list(index.values())
+            if _name_matches_query(p.get("name"), p.get("team"), q)
+        ]
     hits.sort(key=lambda p: p["name"].lower())
     err = None
     if not index and errors:

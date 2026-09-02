@@ -245,7 +245,7 @@ def teams():
 
 
 _PLAYERS_CACHE = {"data": None, "ts": 0, "partial": False}
-_PLAYERS_TTL = 1800  # 30 minutes; rosters change slowly, fan-out is expensive
+_PLAYERS_TTL = 3600  # 1 hour; matches the hourly cron baseline that re-warms it.
 
 
 def _merge_player_index(entries):
