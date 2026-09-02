@@ -5,7 +5,7 @@ window.addEventListener('pageshow', e => {
 });
 
 // Version guard: if the cached HTML and JS disagree, reload once to resync.
-const JS_VERSION = 42;
+const JS_VERSION = 43;
 if (window.APP_VERSION && window.APP_VERSION !== JS_VERSION && !sessionStorage.getItem('vresync')) {
   sessionStorage.setItem('vresync', '1');
   location.reload();
@@ -311,16 +311,14 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
         clearTimeout(timer);
         state.allPlayersLoading = false;
       }
+      const el = document.getElementById('fullLeaderboard');
+      if (el) {
+        const wrap = document.createElement('div');
+        wrap.innerHTML = leaderboardHtml();
+        if (wrap.firstElementChild) el.replaceWith(wrap.firstElementChild);
+      }
       const input = $('#playerSearch');
       if (input && input.value.trim()) renderPlayerTypeahead(input);
-      if (state.tab === 'players' && !$('#playerProfile')) {
-        const q = ($('#playerSearch') || {}).value;
-        renderPlayers();
-        if (q && $('#playerSearch')) {
-          $('#playerSearch').value = q;
-          renderPlayerTypeahead($('#playerSearch'));
-        }
-      }
     }
 
     let lookupTimer = null;
@@ -330,7 +328,7 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
       if (query.length < 2) return { players: [], error: null, partial: false };
       if (lookupCtrl) lookupCtrl.abort();
       lookupCtrl = new AbortController();
-      const timer = setTimeout(() => lookupCtrl.abort(), 15000);
+      const timer = setTimeout(() => lookupCtrl.abort(), 40000);
       try {
         const res = await fetch('/api/players/lookup?q=' + encodeURIComponent(query), {
           signal: lookupCtrl.signal,
@@ -338,9 +336,6 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
         });
         const data = await res.json();
         const list = (data && data.players) || [];
-        if (Array.isArray(list) && list.length && !state.allPlayers.length) {
-          state.allPlayers = list;
-        }
         return {
           players: Array.isArray(list) ? list : [],
           error: data && data.error ? data.error : null,
@@ -572,7 +567,7 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
     function leaderboardHtml() {
       const { level, sortKey, sortDir, showAll } = state.board;
       const LEVELS = [['all', 'All Levels'], ['b', 'B League'], ['c', 'C League'], ['d', 'D League'], ['other', 'Other']];
-      let html = '<div class="card"><h2>Full Leaderboard</h2><div class="picker-days">';
+      let html = '<div class="card" id="fullLeaderboard"><h2>Full Leaderboard</h2><div class="picker-days">';
       LEVELS.forEach(([k, label]) => {
         html += `<span class="pill ${level === k ? 'active' : ''}" data-level="${k}" tabindex="0" role="button">${label}</span>`;
       });
@@ -2382,7 +2377,7 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
         }, 30000);
       }
       setTab(state.tab);
-      // Prefetch the big aggregates in the background so pickers are warm on arrival
+      // Prefetch teams only. Player lookup uses /api/players/lookup so a
+      // boot-time roster fan-out cannot starve a typed name search.
       loadAllTeams();
-      loadAllPlayers();
     })();

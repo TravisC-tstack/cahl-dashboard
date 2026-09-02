@@ -276,10 +276,10 @@ def players_lookup():
         if not _PLAYERS_CACHE.get("partial") and cached:
             return jsonify({"players": [], "partial": False})
 
-    teams_data, err = _all_teams_cached(timeout=12)
+    teams_data, err = _all_teams_cached(timeout=20)
     if err:
         return jsonify({"error": err, "players": []}), 502
-    hits, partial, indexed, serr = scraper.search_players(q, teams_data, timeout=12)
+    hits, partial, indexed, serr = scraper.search_players(q, teams_data, timeout=32)
     if indexed:
         _merge_player_index(indexed)
         if not partial:

@@ -771,14 +771,14 @@ def _num(s):
             return 0
 
 
-def parse_team_stats(team_id):
+def parse_team_stats(team_id, timeout=30):
     """Full roster: every stat table on the page, grouped by section heading.
 
     The stats page groups players into sections (e.g. an unlabeled skaters
     table, FORWARDS, DEFENSE) and a GOALIES table with W/L/OTL/GA/GAA.
     Returns {"sections": [{label, players}], "goalies": [...]}.
     """
-    soup, err = get_soup("/team/stats.cfm?" + _resource_qs("TeamID", team_id))
+    soup, err = get_soup("/team/stats.cfm?" + _resource_qs("TeamID", team_id), timeout=timeout)
     if err:
         return None, err
 
@@ -1922,12 +1922,12 @@ def _name_matches_query(name, team, q):
     return q in n or q in t
 
 
-def search_players(query, teams, timeout=12, max_workers=16):
+def search_players(query, teams, timeout=32, max_workers=24):
     """Find players by name without waiting for a full roster fan-out.
 
     Returns (hits, partial, indexed_all, error).
     """
-    from concurrent.futures import ThreadPoolExecutor, wait
+    from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 
     q = (query or "").strip().lower()
     if len(q) < 2:
@@ -1981,21 +1981,43 @@ def search_players(query, teams, timeout=12, max_workers=16):
 
     def fetch(team):
         try:
-            roster, e = parse_team_stats(team["id"])
+            roster, e = parse_team_stats(team["id"], timeout=6)
         except Exception as ex:
-            errors.append(str(ex))
+            with lock:
+                errors.append(str(ex))
             return
         if e:
-            errors.append(e)
+            with lock:
+                errors.append(e)
             return
         with lock:
             index_roster(team, roster, index)
 
+    named_ids = {tm["id"] for tm in teams if q in (tm.get("name") or "").lower()}
+    ordered = [tm for tm in teams if tm["id"] in named_ids] + [tm for tm in teams if tm["id"] not in named_ids]
+    specific = len(q.split()) >= 2
+
     ex = ThreadPoolExecutor(max_workers=max_workers)
-    futures = [ex.submit(fetch, team) for team in teams]
-    done, pending = wait(futures, timeout=timeout)
-    complete = not pending
-    ex.shutdown(wait=False, cancel_futures=True)
+    pending = set(ex.submit(fetch, tm) for tm in ordered)
+    deadline = time.time() + timeout
+    extra_until = None
+    try:
+        while pending and time.time() < deadline:
+            remain = deadline - time.time()
+            if extra_until is not None:
+                remain = min(remain, extra_until - time.time())
+                if remain <= 0:
+                    break
+            done, pending = wait(pending, timeout=max(0.15, remain), return_when=FIRST_COMPLETED)
+            hits_now = [p for p in index.values() if _name_matches_query(p.get("name"), p.get("team"), q)]
+            if specific and hits_now:
+                if extra_until is None:
+                    extra_until = time.time() + 2.2
+            if named_ids and hits_now and not specific:
+                extra_until = time.time() + 0.4
+        complete = not pending
+    finally:
+        ex.shutdown(wait=False, cancel_futures=True)
 
     hits = [p for p in index.values() if _name_matches_query(p.get("name"), p.get("team"), q)]
     hits.sort(key=lambda p: p["name"].lower())
