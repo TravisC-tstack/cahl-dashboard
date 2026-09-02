@@ -31,6 +31,11 @@ def no_cache_html(resp):
     # Always serve the shell fresh; static assets are versioned with ?v=N.
     if resp.content_type and resp.content_type.startswith("text/html"):
         resp.headers["Cache-Control"] = "no-store"
+    # Live scores must not sit behind a CDN/browser cache.
+    path = request.path or ""
+    if path.startswith("/api/today"):
+        resp.headers["Cache-Control"] = "no-store"
+        resp.headers["Pragma"] = "no-cache"
     return resp
 
 
@@ -68,7 +73,7 @@ def today_scores():
                         league_ids.add(by_id[tid])
             if not league_ids:
                 league_ids = None
-        scraper.enrich_today_scores(data, league_ids=league_ids, timeout=45)
+        scraper.enrich_today_scores(data, league_ids=league_ids, timeout=45, fresh=True)
     except Exception as e:
         print(f"[today_scores] enrich failed: {e}")  # never swallow silently
     return jsonify({"games": data.get("today", [])})

@@ -1186,7 +1186,7 @@ nav a.active, .nav-link.active {
 
 @media (min-width: 768px) {
   :root { --radius-lg: 24px; }
-  #app { max-width: 960px; }
+  #app { max-width: 1100px; }
   main { padding: 26px 28px 32px; }
   .card { padding: 22px; margin-bottom: 20px; }
   .game-card .matchup { font-size: 17px; }
@@ -1196,7 +1196,7 @@ nav a.active, .nav-link.active {
 }
 
 @media (min-width: 900px) {
-  #app { max-width: 1100px; }
+  #app { max-width: 1280px; }
 
   /* Nav becomes a light glass top bar instead of a bottom phone dock */
   header { order: 0; }
@@ -1756,4 +1756,172 @@ html[data-theme="dark"] .theme-icon-moon { display: none; }
   .game-card .live { animation: none; }
   .skeleton::after, .skeleton-card::after { animation: none; }
   *, *::before, *::after { transition-duration: 0.01ms !important; }
+}
+
+
+/* ============================================================
+   Sports board — mobile glance + desktop columns
+   ============================================================ */
+
+.board-howto {
+  margin: 0 2px 14px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.status-chip {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.55px;
+  padding: 2px 6px;
+  border-radius: 5px;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+.status-chip.status-live {
+  background: var(--accent);
+  color: #fff;
+  animation: live-pulse 1.6s ease-in-out infinite;
+}
+.status-chip.status-final {
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+.status-chip.status-upcoming {
+  color: var(--accent-2);
+  border: 1px solid var(--border);
+}
+
+.sb-list { display: flex; flex-direction: column; gap: 10px; }
+
+.sb-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: var(--glass-bg-strong);
+  border: 1px solid var(--border);
+  box-shadow: var(--glass-highlight);
+}
+.sb-card .sb-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.sb-card .sb-side {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 40px;
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--text);
+}
+.sb-card .sb-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sb-card .sb-num {
+  font-size: 28px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+  color: var(--accent-2);
+  line-height: 1;
+  min-width: 1.4ch;
+  text-align: right;
+}
+.sb-card[data-status="live"] { border-left: 4px solid var(--accent); }
+
+/* Mobile today rows: stacked matchup, score in the middle of view */
+.today-list-cols { display: flex; flex-direction: column; }
+.today-row {
+  display: grid;
+  grid-template-columns: 58px 1fr auto;
+  grid-template-areas:
+    "time home board"
+    "time away rink";
+  column-gap: 8px;
+  row-gap: 2px;
+  align-items: center;
+  padding: 10px 4px;
+}
+.today-row .t-time { grid-area: time; font-size: 12px; }
+.today-row .t-home { grid-area: home; font-weight: 700; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.today-row .t-away { grid-area: away; font-weight: 700; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.today-row .t-board {
+  grid-area: board;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.today-row .t-rink { grid-area: rink; justify-self: end; max-width: 110px; overflow: hidden; text-overflow: ellipsis; }
+.t-score-empty {
+  background: transparent;
+  border-color: transparent;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.today-row[data-status="live"] { background: rgba(206, 17, 38, 0.06); border-radius: 10px; }
+
+@media (max-width: 599px) {
+  .t-rink { display: none; }
+  .today-row {
+    grid-template-columns: 54px 1fr auto;
+    grid-template-areas:
+      "time home board"
+      "time away board";
+  }
+  header .brand-accent { display: none; }
+  header h1 { font-size: 17px; }
+  .sb-card .sb-num { font-size: 32px; }
+  .sb-card .sb-side { font-size: 17px; min-height: 44px; }
+}
+
+.today-cols-head {
+  display: none;
+}
+
+@media (min-width: 900px) {
+  .board-howto { font-size: 13px; max-width: 52ch; }
+  .sb-list {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+  .today-list-cols { display: flex; flex-direction: column; }
+  .today-cols-head,
+  .today-row {
+    display: grid;
+    grid-template-columns: 72px minmax(0, 1.2fr) 150px minmax(0, 1.2fr) 120px;
+    grid-template-areas: "time home board away rink";
+    column-gap: 12px;
+    align-items: center;
+  }
+  .today-cols-head {
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.6px;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding: 0 4px 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  .today-row .t-home, .today-row .t-away { font-size: 15px; }
+  .today-row .t-board { justify-content: center; }
+  .today-row .t-rink { justify-self: stretch; max-width: none; }
+  table thead th { white-space: nowrap; }
+  .stat-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .status-chip.status-live, .sb-live, .live-dot-inline { animation: none; }
 }

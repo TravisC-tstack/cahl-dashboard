@@ -5,7 +5,7 @@ window.addEventListener('pageshow', e => {
 });
 
 // Version guard: if the cached HTML and JS disagree, reload once to resync.
-const JS_VERSION = 37;
+const JS_VERSION = 38;
 if (window.APP_VERSION && window.APP_VERSION !== JS_VERSION && !sessionStorage.getItem('vresync')) {
   sessionStorage.setItem('vresync', '1');
   location.reload();
@@ -684,10 +684,13 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
     }, { passive: true });
 
     async function api(path, refresh=false) {
-      const cacheKey = (refresh ? '!' : '') + path;
+      const cacheKey = path.split('?')[0];
       if (!refresh && state.cache[cacheKey]) return state.cache[cacheKey];
       try {
-        const res = await fetch(path);
+        const bust = (refresh || path.indexOf('/api/today') === 0)
+          ? (path.indexOf('?') >= 0 ? '&' : '?') + '_=' + Date.now()
+          : '';
+        const res = await fetch(path + bust, { cache: 'no-store' });
         const data = await res.json();
         if (res.ok) state.cache[cacheKey] = data;
         return data;
@@ -714,46 +717,57 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
     }
 
     // ---- Live game polling ----
-    // Game state: 'upcoming' | 'live' | 'final'. A game with a posted score that is
-    // well past its expected end (~2h15m; games run ~75-90min) is final, not live.
+    // Prefer server status (ET). Fallback uses a tight beer-league window so
+    // finished games never linger as LIVE (~85 min with a score, 100 min hard).
     function gameLiveState(g) {
+      if (g.status === 'live' || g.status === 'final' || g.status === 'upcoming') return g.status;
       const m = (g.time || '').match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
-      if (!m) return 'upcoming';
+      if (!m) return g.played ? 'final' : 'upcoming';
       let hh = parseInt(m[1], 10) % 12;
       if (m[3].toUpperCase() === 'PM') hh += 12;
       const start = new Date();
       start.setHours(hh, parseInt(m[2], 10), 0, 0);
       const now = new Date();
-      const scored = g.played && (g.home_score || g.away_score);
-      if (now < new Date(start.getTime() - 15 * 60000)) return 'upcoming';
-      if (now >= new Date(start.getTime() + 180 * 60000)) return 'final'; // hard window end
-      if (scored && now >= new Date(start.getTime() + 135 * 60000)) return 'final';
+      const scored = g.played && g.home_score != null;
+      const mins = (now - start) / 60000;
+      if (mins < -10) return 'upcoming';
+      if (mins >= 100) return 'final';
+      if (scored && mins >= 85) return 'final';
       return 'live';
     }
 
-    // Polling trigger: any game currently live
     function isLiveGame(g) { return gameLiveState(g) === 'live'; }
+    function hasPostedScore(g) {
+      return !!(g.played && g.home_score != null && g.away_score != null);
+    }
 
     let livePollTimer = null;
+    let livePollInFlight = false;
+    async function tickLiveScores() {
+      if (livePollInFlight || document.hidden) return;
+      livePollInFlight = true;
+      try {
+        delete state.cache['/api/today/scores'];
+        await loadTodayScores(true);
+      } catch (e) { /* next tick retries */ }
+      livePollInFlight = false;
+    }
     function syncLivePolling(games) {
       const anyLive = (games || []).some(isLiveGame);
       document.body.classList.toggle('has-live', anyLive);
       if (livePollTimer) { clearInterval(livePollTimer); livePollTimer = null; }
       if (!anyLive) return;
-      // While any game is in its live window, refresh scores every 30s automatically
-      livePollTimer = setInterval(async () => {
-        try {
-          await fetch('/api/refresh?scope=scores', { method: 'POST' });
-          state.cache = {};
-          await loadTodayScores(true); // light: only the game-night dashboards
-        } catch (e) { /* next tick retries */ }
-      }, 30000);
+      // Do not POST /api/refresh here — that wipes the instance cache and is
+      // unreliable across Vercel isolates. Scores path fetches dashboards fresh.
+      livePollTimer = setInterval(tickLiveScores, 20000);
     }
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden && (state.todayGames || []).some(isLiveGame)) tickLiveScores();
+    });
 
     function setTab(tab) {
       state.tab = tab;
       navLinks.forEach(a => a.classList.toggle('active', a.dataset.tab === tab));
-      if (tab !== 'today' && livePollTimer) { clearInterval(livePollTimer); livePollTimer = null; }
       loadActiveTab();
       $main.focus({ preventScroll: true }); // move keyboard focus into content on tab switch
     }
@@ -814,75 +828,72 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
       `;
     }
 
-    // Hockey scoreboard: one compact card per active game (team — score/LIVE — team).
-    // Only renders while games are actually in their live window.
+    // Hockey scoreboard: stacked (mobile glance) + row (desktop columns).
     function scoreboardHtml(games) {
       const active = (games || []).filter(isLiveGame);
       if (!active.length) return '';
       let html = '<div class="card scoreboard"><h2><span class="live-dot-inline" aria-hidden="true"></span>Live Now</h2>';
-      html += active.map(g => {
-        const scored = g.played && (g.home_score || g.away_score);
-        const center = scored
-          ? `<span class="sb-score">${g.home_score}\u2013${g.away_score}</span>`
-          : '<span class="sb-live">LIVE</span>';
-        return `<div class="sb-row">
-          <div class="sb-team link" onclick="selectTeam('${g.home_id || ''}')">${esc(g.home)}</div>
-          <div class="sb-center">${center}<span class="sb-meta">${fmtTime(g.time)} \u00b7 ${esc((g.facility || '').replace(/^Chiller\s+/i, ''))}</span></div>
-          <div class="sb-team sb-away link" onclick="selectTeam('${g.away_id || ''}')">${esc(g.away)}</div>
-        </div>`;
-      }).join('');
-      html += '<div class="picker-hint">Auto-updating every 30s</div></div>';
+      html += '<div class="sb-list">' + active.map(g => {
+        const scored = hasPostedScore(g);
+        const hs = scored ? g.home_score : '';
+        const as_ = scored ? g.away_score : '';
+        const rink = (g.facility || '').replace(/^Chiller\s+/i, '');
+        return `<article class="sb-card" data-status="live">
+          <div class="sb-status"><span class="sb-live">LIVE</span><span class="sb-meta">${fmtTime(g.time)}${rink ? ' · ' + esc(rink) : ''}</span></div>
+          <div class="sb-side link" onclick="selectTeam('${g.home_id || ''}')"><span class="sb-name">${esc(g.home)}</span><span class="sb-num">${hs === '' ? '–' : hs}</span></div>
+          <div class="sb-side link" onclick="selectTeam('${g.away_id || ''}')"><span class="sb-name">${esc(g.away)}</span><span class="sb-num">${as_ === '' ? '–' : as_}</span></div>
+        </article>`;
+      }).join('') + '</div>';
+      html += '<div class="picker-hint">Scores refresh about every 20s while a game is live</div></div>';
       return html;
     }
 
     function todayRowHtml(g) {
       const rink = (g.facility || '').replace(/^Chiller\s+/i, '');
-      // A 0-0 line is the site's default for unplayed games, so it doesn't count as a score
-      const hasScore = g.played && (g.home_score || g.away_score);
+      const hasScore = hasPostedScore(g);
       const st = gameLiveState(g);
-
-      let scoreHtml;
+      const stLabel = st === 'live' ? 'LIVE' : st === 'final' ? 'FINAL' : 'UPCOMING';
+      let scoreInner;
       if (hasScore) {
-        scoreHtml = `<span class="t-score">${g.home_score}\u2013${g.away_score}</span>`
-          + (st === 'final' ? '<span class="final-chip">FINAL</span>' : '');
+        scoreInner = `<span class="t-score">${g.home_score}\u2013${g.away_score}</span>`;
+      } else if (st === 'live') {
+        scoreInner = '<span class="t-score live-badge">LIVE</span>';
       } else {
-        scoreHtml = st === 'live' ? '<span class="t-score live-badge">LIVE</span>' : '';
+        scoreInner = '<span class="t-score t-score-empty">vs</span>';
       }
-
-      return `<div class="today-row">
+      return `<div class="today-row" data-status="${st}">
         <span class="t-time">${fmtTime(g.time)}</span>
-        <span class="t-match"><span class="link" onclick="selectTeam('${g.home_id || ''}')">${esc(g.home)}</span><span class="t-vs">vs</span><span class="link" onclick="selectTeam('${g.away_id || ''}')">${esc(g.away)}</span></span>
-        ${scoreHtml}
+        <span class="t-home link" onclick="selectTeam('${g.home_id || ''}')">${esc(g.home)}</span>
+        <span class="t-board">${scoreInner}<span class="status-chip status-${st}">${stLabel}</span></span>
+        <span class="t-away link" onclick="selectTeam('${g.away_id || ''}')">${esc(g.away)}</span>
         <span class="t-rink">${esc(rink)}</span>
       </div>`;
     }
 
     function todayPageHtml(data) {
-      let html = '';
+      let html = '<p class="board-howto">Today is the scoreboard. Live games sit up top. Tap a team for roster &amp; schedule. League / Team / Players / Analytics are in the bar.</p>';
       if (state.myTeam) {
         html += '<div class="card hero-card" id="myTeamHero"><div class="empty">Loading your team\u2026</div></div>';
       } else {
-        html += '<div class="card hero-card hero-cta"><div class="hero-cta-text">Set your team to see next game, last result, and record here</div>'
+        html += '<div class="card hero-card hero-cta"><div class="hero-cta-text">Set your team to pin next game, last result, and record here</div>'
           + '<button class="small" onclick="setTab(\'team\')">Pick My Team</button></div>';
       }
 
-      // Hockey scoreboard of live games; finals + upcoming stay visible in a compact strip
       const liveNow = state.todayGames.filter(isLiveGame);
-      const rest = state.todayGames.filter(g => !isLiveGame(g));
-      if (liveNow.length) {
-        html += scoreboardHtml(liveNow);
-        if (rest.length) {
-          html += '<div class="card today-card"><h2>Rest of Tonight</h2>'
-            + '<div class="today-list">' + rest.map(todayRowHtml).join('') + '</div></div>';
-        }
+      const finals = state.todayGames.filter(g => gameLiveState(g) === 'final');
+      const upcoming = state.todayGames.filter(g => gameLiveState(g) === 'upcoming');
+      if (liveNow.length) html += scoreboardHtml(liveNow);
+      if (!state.todayGames.length) {
+        html += '<div class="card today-card"><h2>Today\'s Games</h2><div class="empty">No games posted yet.</div></div>';
       } else {
-        html += '<div class="card today-card"><h2>Today\'s Games</h2>';
-        if (!state.todayGames.length) {
-          html += '<div class="empty">No games posted yet.</div>';
-        } else {
-          html += '<div class="today-list">' + state.todayGames.map(todayRowHtml).join('') + '</div>';
+        if (finals.length) {
+          html += '<div class="card today-card"><h2>Final</h2>'
+            + '<div class="today-list today-list-cols"><div class="today-cols-head"><span>Time</span><span>Home</span><span>Score</span><span>Away</span><span>Rink</span></div>' + finals.map(todayRowHtml).join('') + '</div></div>';
         }
-        html += '</div>';
+        if (upcoming.length) {
+          html += '<div class="card today-card"><h2>Upcoming</h2>'
+            + '<div class="today-list today-list-cols"><div class="today-cols-head"><span>Time</span><span>Home</span><span>Score</span><span>Away</span><span>Rink</span></div>' + upcoming.map(todayRowHtml).join('') + '</div></div>';
+        }
       }
       return html;
     }
@@ -891,12 +902,14 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
     async function loadTodayScores(force=false) {
       const data = await api('/api/today/scores', force);
       if (data.error || !data.games) return;
-      // merge by both team ids
       const byIds = {};
       data.games.forEach(g => { byIds[`${g.home_id}|${g.away_id}`] = g; });
       state.todayGames.forEach(g => {
         const s = byIds[`${g.home_id}|${g.away_id}`];
-        if (s && s.played) {
+        if (!s) return;
+        if (s.status) g.status = s.status;
+        if (s.is_final) g.is_final = true;
+        if (s.played) {
           g.home_score = s.home_score;
           g.away_score = s.away_score;
           g.home_periods = s.home_periods;
@@ -905,7 +918,10 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
         }
       });
       syncLivePolling(state.todayGames);
-      if (state.tab === 'today') setMainHtml(todayPageHtml());
+      if (state.tab === 'today') {
+        setMainHtml(todayPageHtml());
+        if (state.myTeam) loadMyTeamHero(state.myTeam, false);
+      }
     }
 
     async function renderToday(refresh) {

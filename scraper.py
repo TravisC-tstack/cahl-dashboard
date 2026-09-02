@@ -28,7 +28,9 @@ class Cache:
             et_hour = datetime.now(ZoneInfo("America/New_York")).hour
         except Exception:
             et_hour = (datetime.utcnow().hour - 4) % 24  # EDT fallback
-        return 20 if et_hour >= 18 else self.ttl
+        # Game nights often start ~5pm ET; keep scrape cache very short so
+        # /api/today/scores doesn't serve a minute-old scoreboard.
+        return 8 if et_hour >= 17 else self.ttl
 
     def get(self, key):
         if key in self.store:
@@ -54,9 +56,9 @@ def _url(path):
     return f"{BASE_URL}/{path.lstrip('/')}"
 
 
-def get_soup(path):
+def get_soup(path, fresh=False):
     key = f"html:{path}"
-    text = cache.get(key)
+    text = None if fresh else cache.get(key)
     if text is None:
         try:
             resp = session.get(_url(path), timeout=30)
@@ -282,8 +284,8 @@ def _parse_games_section(soup, section_heading):
     return games
 
 
-def parse_dashboard(league_id):
-    soup, err = get_soup(f"/dashboard.cfm?LeagueID={league_id}")
+def parse_dashboard(league_id, fresh=False):
+    soup, err = get_soup(f"/dashboard.cfm?LeagueID={league_id}", fresh=fresh)
     if err:
         return None, err
 
@@ -634,8 +636,8 @@ def parse_team_overview(team_id):
     }, None
 
 
-def parse_team_schedule(team_id):
-    soup, err = get_soup(f"/team/schedule.cfm?TeamID={team_id}")
+def parse_team_schedule(team_id, fresh=False):
+    soup, err = get_soup(f"/team/schedule.cfm?TeamID={team_id}", fresh=fresh)
     if err:
         return None, err
 
@@ -905,7 +907,46 @@ def _et_now():
         return datetime.utcnow() - timedelta(hours=4)  # EDT fallback
 
 
-def enrich_today_scores(home_data, max_workers=8, league_ids=None, timeout=None):
+def _md_label(dt):
+    """Portable 'Aug 5' label (strftime %-d is POSIX-only)."""
+    return dt.strftime("%b ") + str(dt.day)
+
+
+def _game_start_et(time_str, now):
+    m = re.match(r"(\d{1,2}):(\d{2})\s*(AM|PM)", time_str or "", re.IGNORECASE)
+    if not m:
+        return None
+    hh = int(m.group(1)) % 12
+    if m.group(3).upper() == "PM":
+        hh += 12
+    return now.replace(hour=hh, minute=int(m.group(2)), second=0, microsecond=0)
+
+
+def classify_game_status(g, now=None):
+    """upcoming | live | final. Beer-league ice slots are ~60-75 min.
+
+    Finished games must not stay LIVE: scores from a team schedule are finals,
+    and anything past ~85 minutes with a posted score (or ~100 min hard cap)
+    is treated as final even if Recent Results still lists it.
+    """
+    now = now or _et_now()
+    start = _game_start_et(g.get("time"), now)
+    if g.get("is_final"):
+        return "final"
+    if start is None:
+        return "final" if g.get("played") else "upcoming"
+    mins = (now - start).total_seconds() / 60.0
+    scored = bool(g.get("played")) and g.get("home_score") is not None
+    if mins < -10:
+        return "upcoming"
+    if mins >= 100:
+        return "final"
+    if scored and mins >= 85:
+        return "final"
+    return "live"
+
+
+def enrich_today_scores(home_data, max_workers=8, league_ids=None, timeout=None, fresh=False):
     """Fill scores for today's games.
 
     Primary source: league dashboard Recent Results, which update LIVE as
@@ -913,6 +954,7 @@ def enrich_today_scores(home_data, max_workers=8, league_ids=None, timeout=None)
     (finals only). Matches by today's date + both team IDs. Games that haven't
     started yet are left without scores. league_ids optionally scopes which
     dashboards to fetch (only leagues with games today); None = all leagues.
+    fresh=True bypasses the HTML cache (used by /api/today/scores).
     """
     from concurrent import futures as cf
 
@@ -921,27 +963,22 @@ def enrich_today_scores(home_data, max_workers=8, league_ids=None, timeout=None)
         return
 
     now = _et_now()
-    today_label = now.strftime("%b %-d")  # e.g. "Aug 5"
+    today_label = _md_label(now)
 
     def game_started(g):
-        t = g.get("time", "")
-        m = re.match(r"(\d{1,2}):(\d{2})\s*(AM|PM)", t, re.IGNORECASE)
-        if not m:
+        start = _game_start_et(g.get("time"), now)
+        if start is None:
             return True  # unknown time — don't block scores
-        hh = int(m.group(1)) % 12
-        if m.group(3).upper() == "PM":
-            hh += 12
-        start = now.replace(hour=hh, minute=int(m.group(2)), second=0, microsecond=0)
         return now >= start
 
     started = [g for g in games if game_started(g)]
-    if not started:
-        return
 
-    def _attach(src_g, hs, as_):
+    def _attach(src_g, hs, as_, *, is_final=False):
         src_g["home_score"] = hs
         src_g["away_score"] = as_
         src_g["played"] = True
+        if is_final:
+            src_g["is_final"] = True
 
     # 1) Live source: recent results from dashboards of leagues with games today.
     # Soft-timed so the endpoint always answers; whatever completed gets matched.
@@ -950,28 +987,29 @@ def enrich_today_scores(home_data, max_workers=8, league_ids=None, timeout=None)
     dashboards = {}
 
     def fetch_dash(lid):
-        d, e = parse_dashboard(lid)
+        d, e = parse_dashboard(lid, fresh=fresh)
         if not e:
             dashboards[lid] = d
 
-    ex = cf.ThreadPoolExecutor(max_workers=max_workers)
-    futs = [ex.submit(fetch_dash, lid) for lid in league_ids]
-    done, pending = cf.wait(futs, timeout=timeout)
-    ex.shutdown(wait=False, cancel_futures=True)
+    if started and league_ids:
+        ex = cf.ThreadPoolExecutor(max_workers=max_workers)
+        futs = [ex.submit(fetch_dash, lid) for lid in league_ids]
+        done, pending = cf.wait(futs, timeout=timeout)
+        ex.shutdown(wait=False, cancel_futures=True)
 
-    for g in started:
-        ids = {g.get("home_id"), g.get("away_id")}
-        for d in dashboards.values():
-            for r in d.get("recent", []):
-                if r.get("date") != today_label:
-                    continue
-                if {r.get("home_id"), r.get("away_id")} == ids:
-                    hs, as_ = r.get("home_final", 0), r.get("away_final", 0)
-                    if hs or as_:
+        for g in started:
+            ids = {g.get("home_id"), g.get("away_id")}
+            for d in dashboards.values():
+                for r in d.get("recent", []):
+                    if r.get("date") != today_label:
+                        continue
+                    if {r.get("home_id"), r.get("away_id")} == ids:
+                        hs, as_ = r.get("home_final", 0), r.get("away_final", 0)
+                        # Attach even 0-0 — Recent Results listing means scoring started.
                         _attach(g, hs, as_)
                         g["home_periods"] = r.get("home_periods")
                         g["away_periods"] = r.get("away_periods")
-                    break
+                        break
 
     # 2) Fallback for finals the dashboards don't cover: team schedule pages
     missing = [g for g in started if not g.get("played")]
@@ -980,7 +1018,7 @@ def enrich_today_scores(home_data, max_workers=8, league_ids=None, timeout=None)
         schedules = {}
 
         def fetch(tid):
-            sched, e = parse_team_schedule(tid)
+            sched, e = parse_team_schedule(tid, fresh=fresh)
             if not e and sched:
                 schedules[tid] = sched
 
@@ -989,12 +1027,15 @@ def enrich_today_scores(home_data, max_workers=8, league_ids=None, timeout=None)
 
         for g in missing:
             for tid in (g.get("home_id"), g.get("away_id")):
-                for s in schedules.get(tid, []):
-                    if s["date"] != today_label or not s.get("played"):
+                for sch in schedules.get(tid, []):
+                    if sch["date"] != today_label or not sch.get("played"):
                         continue
-                    if {s.get("home_id"), s.get("away_id")} == ids_of(g):
-                        _attach(g, s["home_score"], s["away_score"])
+                    if {sch.get("home_id"), sch.get("away_id")} == ids_of(g):
+                        _attach(g, sch["home_score"], sch["away_score"], is_final=True)
                         break
+
+    for g in games:
+        g["status"] = classify_game_status(g, now)
 
 
 def ids_of(g):
