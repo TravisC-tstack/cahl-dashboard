@@ -56,12 +56,12 @@ def _url(path):
     return f"{BASE_URL}/{path.lstrip('/')}"
 
 
-def get_soup(path, fresh=False):
+def get_soup(path, fresh=False, timeout=30):
     key = f"html:{path}"
     text = None if fresh else cache.get(key)
     if text is None:
         try:
-            resp = session.get(_url(path), timeout=30)
+            resp = session.get(_url(path), timeout=timeout)
             resp.raise_for_status()
             text = resp.text
             # Throttle/error pages are tiny; real pages are tens of KB.
@@ -551,6 +551,8 @@ def parse_dashboard(league_id, fresh=False):
     if m:
         playoff_cutoff = int(m.group(1))
 
+    championship = extract_championship(playoffs, season, league_name)
+
     return {
         "league_name": league_name,
         "season": season,
@@ -560,6 +562,7 @@ def parse_dashboard(league_id, fresh=False):
         "recent": recent,
         "playoffs": playoffs,
         "playoff_cutoff": playoff_cutoff,
+        "championship": championship,
     }, None
 
 
@@ -571,6 +574,10 @@ def parse_team_overview(team_id):
     h1 = soup.find("h1")
     team_name = _text(h1) if h1 else ""
     team_name_core = team_name.replace(" Hockey", "").strip()
+    season = ""
+    breadcrumb = soup.find("ol", class_="breadcrumb")
+    if breadcrumb:
+        season = _text(breadcrumb.find("li", class_="active") or breadcrumb.find("li"))
 
     def _team_or_self(cell, team_id):
         link = cell.find("a", href=True)
@@ -674,6 +681,7 @@ def parse_team_overview(team_id):
     return {
         "team_name": team_name,
         "team_name_core": team_name_core,
+        "season": season,
         "next_game": next_game,
         "recent_result": recent,
         "team_leaders": team_leaders,
@@ -1801,3 +1809,197 @@ def parse_team_history(team_id, timeout=18):
         "awards": uniq_awards,
         "partial": bool(tokens) and len(histories) < len(tokens),
     }, None
+
+
+def extract_championship(playoffs, season="", league_name=""):
+    """Champion only from a played CHAMPIONSHIP/FINAL game. Never invent a title."""
+    if not playoffs:
+        return None
+    champ_round = None
+    for rnd in playoffs:
+        name = rnd.get("round") or ""
+        if re.search(r"CHAMPIONSHIP", name, re.I):
+            champ_round = rnd
+            break
+    if champ_round is None:
+        for rnd in playoffs:
+            name = rnd.get("round") or ""
+            if re.search(r"\bFINAL\b", name, re.I) and not re.search(r"SEMI", name, re.I):
+                champ_round = rnd
+    if not champ_round:
+        return None
+    played = [g for g in champ_round.get("games") or [] if g.get("played")
+              and g.get("home_score") is not None and g.get("away_score") is not None]
+    if not played:
+        return None
+    g = played[-1]
+    hs, aws = g["home_score"], g["away_score"]
+    if hs == aws:
+        return None
+    if hs > aws:
+        winner, winner_id, loser = g.get("home"), g.get("home_id"), g.get("away")
+    else:
+        winner, winner_id, loser = g.get("away"), g.get("away_id"), g.get("home")
+    session = (season or "").strip()
+    league = (league_name or "").strip()
+    title_bits = [b for b in (session, league, "Champion") if b]
+    return {
+        "session": session,
+        "league": league,
+        "title": " ".join(title_bits),
+        "winner": winner,
+        "winner_id": winner_id,
+        "opponent": loser,
+        "score": f"{hs}-{aws}",
+        "date": g.get("date") or "",
+        "round": champ_round.get("round") or "Championship",
+    }
+
+
+def awards_for_team(team_id, team_name, championship, roster=None):
+    """Badge if this team won the published championship. No invented trophies."""
+    awards = []
+    if not championship:
+        return awards
+    tid = str(team_id or "")
+    win_id = str(championship.get("winner_id") or "")
+    win_name = _norm_team_name(championship.get("winner") or "")
+    us = _norm_team_name((team_name or "").replace(" Hockey", ""))
+    team_won = bool(tid and win_id and tid == win_id) or (bool(us) and us == win_name)
+    if team_won:
+        awards.append({
+            "kind": "champion",
+            "title": championship.get("title") or "Session champion",
+            "session": championship.get("session") or "",
+            "detail": championship.get("score") or "",
+        })
+    return awards
+
+
+def _index_player(team, p, position):
+    return {
+        "name": p.get("name") or "",
+        "team": team.get("name") or "",
+        "team_id": team.get("id"),
+        "league_id": team.get("league_id"),
+        "league_name": team.get("league_name") or "",
+        "position": p.get("position") or position or "",
+        "jersey": p.get("jersey", "-"),
+        "token": p.get("token"),
+        "player_id": p.get("token") or p.get("player_id"),
+        "gp": p.get("gp", 0),
+        "g": p.get("g", 0),
+        "a": p.get("a", 0),
+        "pts": p.get("pts", 0),
+        "pim": p.get("pim", 0),
+        "w": p.get("w", 0),
+        "l": p.get("l", 0),
+        "otl": p.get("otl", 0),
+        "ga": p.get("ga", 0),
+        "gaa": p.get("gaa", 0),
+    }
+
+
+def index_roster(team, roster, dest):
+    if not roster:
+        return
+    for sec in roster.get("sections") or []:
+        for p in sec.get("players") or []:
+            if not p.get("name"):
+                continue
+            key = f"{p['name'].lower()}|{team['id']}"
+            dest[key] = _index_player(team, p, sec.get("label") or "")
+    for g in roster.get("goalies") or []:
+        if not g.get("name"):
+            continue
+        key = f"{g['name'].lower()}|{team['id']}"
+        dest[key] = _index_player(team, g, "Goalie")
+
+
+def _name_matches_query(name, team, q):
+    n = (name or "").lower()
+    t = (team or "").lower()
+    return q in n or q in t
+
+
+def search_players(query, teams, timeout=12, max_workers=16):
+    """Find players by name without waiting for a full roster fan-out.
+
+    Returns (hits, partial, indexed_all, error).
+    """
+    from concurrent.futures import ThreadPoolExecutor, wait
+
+    q = (query or "").strip().lower()
+    if len(q) < 2:
+        return [], False, {}, None
+    if not teams:
+        return [], False, {}, "No teams to search"
+
+    index = {}
+    errors = []
+    lock = __import__("threading").Lock()
+
+    try:
+        leaders, lerr = parse_all_leaders()
+        if not lerr and leaders:
+            for key in ("points", "goals", "assists"):
+                for row in leaders.get(key) or []:
+                    team = {
+                        "id": row.get("team_id"),
+                        "name": row.get("team") or "",
+                        "league_id": None,
+                        "league_name": "",
+                    }
+                    if not row.get("name") or not team["id"]:
+                        continue
+                    p = {
+                        "name": row["name"],
+                        "token": row.get("player_id") if _is_opaque_id(row.get("player_id")) else None,
+                        "player_id": row.get("player_id"),
+                        "gp": 0,
+                        "g": row.get("goals", 0) if key == "goals" else 0,
+                        "a": row.get("assists", 0) if key == "assists" else 0,
+                        "pts": row.get("points", 0) if key == "points" else 0,
+                        "pim": 0, "jersey": "-", "position": "",
+                    }
+                    k = f"{p['name'].lower()}|{team['id']}"
+                    if k not in index:
+                        entry = _index_player(team, p, "")
+                        entry["player_id"] = row.get("player_id")
+                        if _is_opaque_id(row.get("player_id")):
+                            entry["token"] = row.get("player_id")
+                        index[k] = entry
+                    else:
+                        if key == "points":
+                            index[k]["pts"] = row.get("points", index[k].get("pts", 0))
+                        elif key == "goals":
+                            index[k]["g"] = row.get("goals", index[k].get("g", 0))
+                        elif key == "assists":
+                            index[k]["a"] = row.get("assists", index[k].get("a", 0))
+    except Exception as ex:
+        errors.append(str(ex))
+
+    def fetch(team):
+        try:
+            roster, e = parse_team_stats(team["id"])
+        except Exception as ex:
+            errors.append(str(ex))
+            return
+        if e:
+            errors.append(e)
+            return
+        with lock:
+            index_roster(team, roster, index)
+
+    ex = ThreadPoolExecutor(max_workers=max_workers)
+    futures = [ex.submit(fetch, team) for team in teams]
+    done, pending = wait(futures, timeout=timeout)
+    complete = not pending
+    ex.shutdown(wait=False, cancel_futures=True)
+
+    hits = [p for p in index.values() if _name_matches_query(p.get("name"), p.get("team"), q)]
+    hits.sort(key=lambda p: p["name"].lower())
+    err = None
+    if not index and errors:
+        err = "; ".join(errors[:3])
+    return hits, (not complete), index, err

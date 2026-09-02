@@ -280,37 +280,81 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
 
     async function loadAllPlayers(force=false) {
       if (state.allPlayersLoading) return;
-      if (state.allPlayers.length && !force) return;
+      if (state.allPlayers.length && !force && !state.playersPartial) return;
       state.allPlayersLoading = true;
       state.playersError = false;
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 22000);
       try {
-        const res = await fetch('/api/players');
+        const res = await fetch('/api/players', { signal: ctrl.signal, cache: 'no-store' });
         const data = await res.json();
         const list = Array.isArray(data) ? data : (data && data.players);
         if (Array.isArray(list) && list.length) {
           state.allPlayers = list;
+          state.playersError = false;
           if (!Array.isArray(data) && data.partial) {
             state.playersPartial = { fetched: data.fetched, total: data.total };
-            // Scraped pages are warm now — a retry finishes the rest quickly (bounded)
             state.playersRetries = (state.playersRetries || 0) + 1;
-            if (state.playersRetries <= 5) {
-              setTimeout(() => loadAllPlayers(true), 15000);
+            if (state.playersRetries <= 4) {
+              setTimeout(() => loadAllPlayers(true), 8000);
             }
           } else {
             state.playersPartial = null;
             state.playersRetries = 0;
           }
         } else {
-          state.playersError = true;
+          state.playersError = (data && data.error) ? data.error : 'No players returned';
         }
       } catch (e) {
-        state.playersError = true;
+        state.playersError = (e && e.name === 'AbortError') ? 'Player index timed out' : 'Couldn\u2019t load players';
+      } finally {
+        clearTimeout(timer);
+        state.allPlayersLoading = false;
       }
-      state.allPlayersLoading = false;
-      // Re-render whatever is visible so error/loaded states refresh
       const input = $('#playerSearch');
-      if (input && input.value.trim()) input.dispatchEvent(new Event('input', { bubbles: true }));
-      if (state.tab === 'players') renderPlayers();
+      if (input && input.value.trim()) renderPlayerTypeahead(input);
+      if (state.tab === 'players' && !$('#playerProfile')) {
+        const q = ($('#playerSearch') || {}).value;
+        renderPlayers();
+        if (q && $('#playerSearch')) {
+          $('#playerSearch').value = q;
+          renderPlayerTypeahead($('#playerSearch'));
+        }
+      }
+    }
+
+    let lookupTimer = null;
+    let lookupCtrl = null;
+    async function lookupPlayers(q) {
+      const query = (q || '').trim();
+      if (query.length < 2) return { players: [], error: null, partial: false };
+      if (lookupCtrl) lookupCtrl.abort();
+      lookupCtrl = new AbortController();
+      const timer = setTimeout(() => lookupCtrl.abort(), 15000);
+      try {
+        const res = await fetch('/api/players/lookup?q=' + encodeURIComponent(query), {
+          signal: lookupCtrl.signal,
+          cache: 'no-store',
+        });
+        const data = await res.json();
+        const list = (data && data.players) || [];
+        if (Array.isArray(list) && list.length && !state.allPlayers.length) {
+          state.allPlayers = list;
+        }
+        return {
+          players: Array.isArray(list) ? list : [],
+          error: data && data.error ? data.error : null,
+          partial: !!(data && data.partial),
+        };
+      } catch (e) {
+        return {
+          players: [],
+          error: (e && e.name === 'AbortError') ? 'Lookup timed out' : 'Couldn\u2019t search players',
+          partial: false,
+        };
+      } finally {
+        clearTimeout(timer);
+      }
     }
 
     async function pickSearchedTeam(teamId, leagueId) {
@@ -386,7 +430,7 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
 
     function paItems() {
       const box = $('#playerSuggest');
-      return box ? [...box.querySelectorAll('.typeahead-item[data-ptoken]')] : [];
+      return box ? [...box.querySelectorAll('.typeahead-item[data-pname]')] : [];
     }
 
     function paHighlight(items) {
@@ -400,28 +444,50 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
       paIndex = -1;
     }
 
+    function playerRowHtml(p) {
+      const tok = p.token || '';
+      const pid = p.player_id || '';
+      return `<div class="typeahead-item" role="option" data-ptoken="${esc(tok)}" data-pid="${esc(pid)}" data-tid="${esc(p.team_id || '')}" data-tname="${esc(p.team)}" data-pname="${esc(p.name)}"><span class="ta-name">${esc(p.name)}</span><span class="ta-league">${esc(p.team)} \u00b7 ${esc(p.position || '')}</span></div>`;
+    }
+
     function renderPlayerTypeahead(input) {
       const box = $('#playerSuggest');
       if (!box) return;
-      const q = input.value.trim().toLowerCase();
+      const q = input.value.trim();
       if (!q) { box.innerHTML = ''; paClose(input, box); return; }
-      const matches = state.allPlayers.filter(p =>
-        p.name.toLowerCase().includes(q) || p.team.toLowerCase().includes(q)
+      const ql = q.toLowerCase();
+      const local = state.allPlayers.filter(p =>
+        (p.name || '').toLowerCase().includes(ql) || (p.team || '').toLowerCase().includes(ql)
       ).slice(0, 10);
-      if (state.playersError && !state.allPlayers.length) {
-        box.innerHTML = '<div class="typeahead-item" data-pretry><span class="ta-name">Couldn\u2019t load players \u2014 tap to retry</span></div>';
-      } else if (!state.allPlayers.length) {
-        box.innerHTML = '<div class="typeahead-item muted">Loading players\u2026</div>';
-      } else if (!matches.length) {
-        box.innerHTML = '<div class="typeahead-item muted">No players match</div>';
+      if (local.length) {
+        box.innerHTML = local.map(playerRowHtml).join('');
+      } else if (q.length < 2) {
+        box.innerHTML = '<div class="typeahead-item muted">Keep typing a name\u2026</div>';
       } else {
-        box.innerHTML = matches.map(p =>
-          `<div class="typeahead-item" role="option" data-ptoken="${p.token || ''}" data-tid="${p.team_id}" data-tname="${esc(p.team)}" data-pname="${esc(p.name)}"><span class="ta-name">${esc(p.name)}</span><span class="ta-league">${esc(p.team)} · ${esc(p.position || '')}</span></div>`
-        ).join('');
+        box.innerHTML = '<div class="typeahead-item muted">Searching\u2026</div>';
       }
       paIndex = -1;
       box.classList.add('open');
       input.setAttribute('aria-expanded', 'true');
+      if (q.length < 2) return;
+      clearTimeout(lookupTimer);
+      lookupTimer = setTimeout(async () => {
+        if (!$('#playerSearch') || $('#playerSearch').value.trim() !== q) return;
+        const result = await lookupPlayers(q);
+        if (!$('#playerSearch') || $('#playerSearch').value.trim() !== q) return;
+        const boxNow = $('#playerSuggest');
+        if (!boxNow) return;
+        if (result.error && !result.players.length) {
+          boxNow.innerHTML = '<div class="typeahead-item" data-plookupretry><span class="ta-name">' + esc(result.error) + ' \u2014 tap to retry</span></div>';
+        } else if (!result.players.length) {
+          const extra = result.partial ? ' Index still filling \u2014 tap to retry.' : '';
+          boxNow.innerHTML = '<div class="typeahead-item" data-plookupretry><span class="ta-name">No players match.' + extra + '</span></div>';
+        } else {
+          boxNow.innerHTML = result.players.slice(0, 10).map(playerRowHtml).join('');
+        }
+        paIndex = -1;
+        boxNow.classList.add('open');
+      }, 220);
     }
 
     function pickSearchedPlayer(token) {
@@ -514,9 +580,11 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
 
       if (!state.allPlayers.length) {
         if (state.playersError) {
-          html += '<div class="empty">Couldn\u2019t load the player index (it\u2019s a big scrape \u2014 first load can take a minute). <button class="ghost small" data-pretry style="margin-top:8px">Retry</button></div></div>';
+          html += '<div class="empty">' + esc(typeof state.playersError === 'string' ? state.playersError : 'Couldn\u2019t load the player index') + ' <button class="ghost small" data-pretry style="margin-top:8px">Retry</button></div></div>';
+        } else if (state.allPlayersLoading) {
+          html += '<div class="empty">Loading the full leaderboard\u2026 <span class="picker-hint" style="display:block;margin-top:4px">PTS/G leaders below are ready now. Search a name up top \u2014 lookup does not wait for this list.</span></div></div>';
         } else {
-          html += '<div class="empty">Loading every player in the CAHL\u2026 <span class="picker-hint" style="display:block;margin-top:4px">first load can take a minute</span></div></div>';
+          html += '<div class="empty">Full leaderboard isn\u2019t loaded yet. <button class="ghost small" data-pretry style="margin-top:8px">Load leaderboard</button></div></div>';
         }
         return html;
       }
@@ -1541,13 +1609,25 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
 
       html += '<div id="teamAwardsMount"></div>';
 
-      // Season record / historical wins (derived from full schedule)
+      // Current session record (labeled from ChillerStats breadcrumb) + published awards only
       const form = data.form || {};
+      const sessionLabel = (data.current_session && data.current_session.label) || data.season || '';
+      const awards = data.awards || [];
+      if (awards.length) {
+        html += '<div class="award-row">';
+        awards.forEach(a => {
+          html += `<span class="award-badge" title="${esc(a.detail || '')}">${esc(a.title || 'Session award')}${a.session && a.session !== sessionLabel ? ' \u00b7 ' + esc(a.session) : ''}</span>`;
+        });
+        html += '</div>';
+      }
+
+      html += '<div class="card session-card" style="padding:12px 14px;margin:0 0 12px"><h3 style="margin-bottom:8px">Session records</h3>';
       if (form.played) {
+        html += `<div class="picker-hint" style="margin:-4px 0 8px">${esc(sessionLabel || 'Current session')} \u2014 W-L-OTL from ChillerStats standings</div>`;
         const s = form.streak || '';
         const streakClass = s.startsWith('W') ? 'win' : (s.startsWith('L') ? 'loss' : (s.startsWith('O') ? 'otl' : 'tie'));
         html += `<div class="record-row">
-          <div class="stat-box"><div class="num">${form.record}</div><div class="label">Record</div></div>
+          <div class="stat-box"><div class="num">${form.record}</div><div class="label">${esc(sessionLabel || 'Record')}</div></div>
           <div class="stat-box"><div class="num">${form.points ?? '-'}</div><div class="label">Points</div></div>
           <div class="stat-box"><div class="num">${form.home_record}</div><div class="label">Home</div></div>
           <div class="stat-box"><div class="num">${form.away_record}</div><div class="label">Away</div></div>
@@ -1564,7 +1644,10 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
             `<span class="tl-game ${t.result.toLowerCase()}" title="${esc(t.date)} ${t.location === 'H' ? 'vs' : '@'} ${esc(t.opponent)} (${t.score})">${t.result}</span>`
           ).join('') +
           '</div>';
+      } else if (sessionLabel) {
+        html += `<div class="picker-hint">${esc(sessionLabel)} \u2014 no games played yet, so no record to show.</div>`;
       }
+      html += '</div>';
 
       if (over.next_game) {
         const ng = over.next_game;
@@ -1677,18 +1760,15 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
     }
 
     function awardsHtml(awards) {
-      if (!awards || !awards.length) return '';
-      let html = '<div class="awards-row" role="list">';
+      if (!awards || !awards.length) {
+        return '<div class="picker-hint award-empty">No session championship or 1st-place award published for this team.</div>';
+      }
+      let html = '<div class="award-row" role="list">';
       awards.forEach(a => {
         const champ = a.kind === 'champion';
-        html += `<div class="award-card ${champ ? 'champion' : 'first-place'}" role="listitem">
-          <div class="award-icon" aria-hidden="true">${champ ? "🏆" : "🥇"}</div>
-          <div class="award-body">
-            <div class="award-title">${esc(a.title || (champ ? 'Session champion' : '1st place'))}</div>
-            <div class="award-meta">${esc(a.season || '')}${a.league ? ' · ' + esc(a.league) : ''}</div>
-            ${a.detail ? `<div class="award-detail">${esc(a.detail)}${a.score ? ' (' + esc(a.score) + ')' : ''}</div>` : ''}
-          </div>
-        </div>`;
+        const title = a.title || (champ ? 'Session champion' : '1st place');
+        const meta = [a.season, a.league].filter(Boolean).join(' \u00b7 ');
+        html += `<span class="award-badge ${champ ? 'champ' : 'place'}" role="listitem" title="${esc(a.detail || a.score || '')}">${esc(title)}${meta ? ' \u00b7 ' + esc(meta) : ''}</span>`;
       });
       html += '</div>';
       return html;
@@ -1789,8 +1869,8 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
         teamName: opts.teamName || '',
         playerName: opts.playerName || '',
       };
-      if (opts.playerId && opts.teamId) renderPlayerProfile(opts.teamId, opts.playerId, null);
-      else if (opts.token) renderPlayerProfile(null, null, opts.token);
+      if (opts.token) renderPlayerProfile(null, null, opts.token);
+      else if (opts.playerId && opts.teamId) renderPlayerProfile(opts.teamId, opts.playerId, null);
       else showToast('No profile link for that player');
     };
 
@@ -2025,7 +2105,7 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
     // Team/player search typeaheads — fully delegated (re-renders can't leak listeners)
     $main.addEventListener('focusin', e => {
       if (e.target.id === 'teamSearch') loadAllTeams();
-      if (e.target.id === 'playerSearch') loadAllPlayers();
+      if (e.target.id === 'playerSearch' && e.target.value.trim().length >= 2) renderPlayerTypeahead(e.target);
     });
 
     $main.addEventListener('input', e => {
@@ -2058,6 +2138,7 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
         if (isTeam) pickSearchedTeam(pick.dataset.tid, pick.dataset.lid);
         else openPlayer({
           token: pick.dataset.ptoken,
+          playerId: pick.dataset.pid,
           teamId: pick.dataset.tid,
           teamName: pick.dataset.tname,
           playerName: pick.dataset.pname,
@@ -2081,7 +2162,7 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
     $main.addEventListener('click', async (e) => {
       // Player lookup item selection — must come BEFORE the team check,
       // because player items also carry data-tid for game-log context
-      const paItem = e.target.closest('.typeahead-item[data-ptoken]');
+      const paItem = e.target.closest('.typeahead-item[data-pname]');
       if (paItem) {
         const input = $('#playerSearch');
         const box = $('#playerSuggest');
@@ -2089,10 +2170,17 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
         if (box) paClose(input, box);
         openPlayer({
           token: paItem.dataset.ptoken,
+          playerId: paItem.dataset.pid,
           teamId: paItem.dataset.tid,
           teamName: paItem.dataset.tname,
           playerName: paItem.dataset.pname,
         });
+        return;
+      }
+      const lookupRetry = e.target.closest('[data-plookupretry]');
+      if (lookupRetry) {
+        const input = $('#playerSearch');
+        if (input) renderPlayerTypeahead(input);
         return;
       }
 
