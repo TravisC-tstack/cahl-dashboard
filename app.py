@@ -133,6 +133,31 @@ def team(team_id):
     })
 
 
+_HISTORY_CACHE = {}
+_HISTORY_TTL = 21600  # 6 hours; past sessions rarely change
+
+
+@app.route("/api/team/<team_id>/history")
+def team_history(team_id):
+    """Previous-session W-L-OTL and championship/1st-place awards.
+
+    Separate from /api/team so the main team page is never blocked on
+    roster fan-out. Cached aggressively; partial results are not stored.
+    """
+    import time
+    now = time.time()
+    cached = _HISTORY_CACHE.get(team_id)
+    if cached and now - cached["ts"] < _HISTORY_TTL:
+        return jsonify(cached["data"])
+    data, err = scraper.parse_team_history(team_id, timeout=20)
+    if err:
+        return jsonify({"error": err, "previous": [], "awards": [], "sessions": []}), 502
+    payload = data or {"previous": [], "awards": [], "sessions": []}
+    if data and not data.get("partial"):
+        _HISTORY_CACHE[team_id] = {"data": payload, "ts": now}
+    return jsonify(payload)
+
+
 def _all_teams_cached():
     """The /api/teams aggregate, using its 5-minute cache."""
     import time
@@ -349,6 +374,7 @@ def refresh():
     scope = request.args.get("scope", "all")
     scraper.clear_cache()
     _SESSIONS_CACHE.clear()
+    _HISTORY_CACHE.clear()
     if scope == "all":
         _TEAMS_CACHE["data"] = None
         _TEAMS_CACHE["ts"] = 0

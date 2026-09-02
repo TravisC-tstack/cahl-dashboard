@@ -1925,3 +1925,73 @@ html[data-theme="dark"] .theme-icon-moon { display: none; }
 @media (prefers-reduced-motion: reduce) {
   .status-chip.status-live, .sb-live, .live-dot-inline { animation: none; }
 }
+
+
+/* Team session awards + previous-season records */
+.awards-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 4px 0 14px;
+}
+.award-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  flex: 1 1 220px;
+  min-width: 0;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--panel);
+}
+.award-card.champion {
+  border-color: rgba(206, 17, 38, 0.45);
+  background: linear-gradient(135deg, rgba(206, 17, 38, 0.10), rgba(0, 38, 84, 0.08));
+}
+.award-card.first-place {
+  border-color: rgba(176, 125, 0, 0.40);
+  background: rgba(176, 125, 0, 0.08);
+}
+.award-icon { font-size: 22px; line-height: 1; }
+.award-title {
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  color: var(--text);
+}
+.award-meta {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  margin-top: 2px;
+}
+.award-detail {
+  font-size: 12px;
+  color: var(--text);
+  margin-top: 4px;
+}
+.empty-history, .hist-loading {
+  font-size: 13px;
+  color: var(--muted);
+  padding: 10px 2px 4px;
+}
+.hist-po {
+  display: inline-block;
+  margin-left: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+}
+html[data-theme="dark"] .award-card.champion {
+  background: linear-gradient(135deg, rgba(206, 17, 38, 0.18), rgba(169, 198, 245, 0.08));
+}
+html[data-theme="dark"] .award-card.first-place {
+  background: rgba(255, 209, 102, 0.10);
+  border-color: rgba(255, 209, 102, 0.35);
+}
+@media (max-width: 640px) {
+  .award-card { flex: 1 1 100%; }
+  .history-table { font-size: 12.5px; }
+}

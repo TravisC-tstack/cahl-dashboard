@@ -5,7 +5,7 @@ window.addEventListener('pageshow', e => {
 });
 
 // Version guard: if the cached HTML and JS disagree, reload once to resync.
-const JS_VERSION = 39;
+const JS_VERSION = 40;
 if (window.APP_VERSION && window.APP_VERSION !== JS_VERSION && !sessionStorage.getItem('vresync')) {
   sessionStorage.setItem('vresync', '1');
   location.reload();
@@ -1539,6 +1539,8 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
         html += playoffsHtml(data.playoffs);
       }
 
+      html += '<div id="teamAwardsMount"></div>';
+
       // Season record / historical wins (derived from full schedule)
       const form = data.form || {};
       if (form.played) {
@@ -1573,6 +1575,8 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
         const r = over.recent_result;
         html += `<div class="game-card"><div class="meta">Recent Result</div><div class="matchup"><div class="team">${esc(r.home)}</div><span class="score">${r.home_final}-${r.away_final}</span><div class="team">${esc(r.away)}</div></div></div>`;
       }
+
+      html += '<div id="teamHistoryMount"></div>';
 
       html += '<h3 style="margin-top:18px">Team Leaders</h3><div class="stat-grid">';
       const leaderKeys = ['points','goals','assists','pim'];
@@ -1669,6 +1673,67 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
       $content.innerHTML = html;
       a11yFix($content);
       animateNumbers($content);
+      fillTeamHistory(teamId);
+    }
+
+    function awardsHtml(awards) {
+      if (!awards || !awards.length) return '';
+      let html = '<div class="awards-row" role="list">';
+      awards.forEach(a => {
+        const champ = a.kind === 'champion';
+        html += `<div class="award-card ${champ ? 'champion' : 'first-place'}" role="listitem">
+          <div class="award-icon" aria-hidden="true">${champ ? "🏆" : "🥇"}</div>
+          <div class="award-body">
+            <div class="award-title">${esc(a.title || (champ ? 'Session champion' : '1st place'))}</div>
+            <div class="award-meta">${esc(a.season || '')}${a.league ? ' · ' + esc(a.league) : ''}</div>
+            ${a.detail ? `<div class="award-detail">${esc(a.detail)}${a.score ? ' (' + esc(a.score) + ')' : ''}</div>` : ''}
+          </div>
+        </div>`;
+      });
+      html += '</div>';
+      return html;
+    }
+
+    function previousSessionsHtml(rows, empty) {
+      let html = '<h3 style="margin-top:18px">Previous sessions</h3>';
+      if (!rows || !rows.length) {
+        html += '<div class="empty-history">' + (empty || 'No previous sessions on ChillerStats for this team.') + '</div>';
+        return html;
+      }
+      html += '<table class="history-table"><thead><tr><th>Session</th><th>League</th><th class="num">GP</th><th class="num">W-L-OTL</th><th class="num">PTS</th><th class="num">GF</th><th class="num">GA</th><th>Finish</th></tr></thead><tbody>';
+      html += rows.map(r => {
+        const finish = r.champion ? 'Champion' : (r.first_place ? '1st' : (r.rank ? r.rank + (r.teams ? ' of ' + r.teams : '') : '—'));
+        const po = r.playoff_record ? ` <span class="hist-po">Playoffs ${esc(r.playoff_record)}</span>` : '';
+        return `<tr>
+          <td>${esc(r.season)}</td><td>${esc(r.league)}</td>
+          <td class="num">${r.gp}</td><td class="num">${esc(r.record)}</td>
+          <td class="num">${r.pts}</td><td class="num">${r.gf}</td><td class="num">${r.ga}</td>
+          <td>${finish}${po}</td>
+        </tr>`;
+      }).join('');
+      html += '</tbody></table>';
+      return html;
+    }
+
+    async function fillTeamHistory(teamId) {
+      const $aw = document.getElementById('teamAwardsMount');
+      const $hi = document.getElementById('teamHistoryMount');
+      if ($hi) $hi.innerHTML = '<div class="hist-loading">Loading session history…</div>';
+      try {
+        const data = await api(`/api/team/${teamId}/history`);
+        if ($aw) {
+          $aw.innerHTML = awardsHtml(data.awards || []);
+        }
+        if ($hi) {
+          if (data.error && !(data.previous && data.previous.length) && !(data.awards && data.awards.length)) {
+            $hi.innerHTML = previousSessionsHtml([], 'Session history is unavailable right now.');
+          } else {
+            $hi.innerHTML = previousSessionsHtml(data.previous || [], data.partial ? 'Still gathering older sessions from ChillerStats…' : undefined);
+          }
+        }
+      } catch (e) {
+        if ($hi) $hi.innerHTML = previousSessionsHtml([], 'Session history is unavailable right now.');
+      }
     }
 
     async function renderPlayers(refresh) {

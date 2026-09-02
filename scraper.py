@@ -881,10 +881,21 @@ def _parse_player_history_soup(soup):
             cells = row.find_all("td")
             if len(cells) < 11:
                 continue
+            team_link = cells[2].find("a", href=True)
+            team_token = _query_token(team_link["href"]) if team_link else None
+            season_sort = 0
+            ds = cells[0].get("data-sort")
+            if ds:
+                try:
+                    season_sort = int(str(ds).split(".")[0])
+                except ValueError:
+                    season_sort = 0
             history.append({
                 "season": _text(cells[0]),
                 "league": _text(cells[1]),
                 "team": _text(cells[2]),
+                "team_token": team_token,
+                "season_sort": season_sort,
                 "gp": _score_to_int(_text(cells[3])),
                 "g": _score_to_int(_text(cells[4])),
                 "a": _score_to_int(_text(cells[5])),
@@ -1526,3 +1537,267 @@ def parse_player_history_by_token(token):
     if err:
         return None, err
     return _parse_player_history_soup(soup), None
+
+
+def parse_team_playoff_results(team_id):
+    """Playoff games from a team schedule page (historical tokens work).
+
+    Result W/L/T is from this team's perspective (ChillerStats last column).
+    Returns [] when the source has no Playoff Schedule table.
+    """
+    soup, err = get_soup("/team/schedule.cfm?" + _resource_qs("TeamID", team_id))
+    if err:
+        return [], err
+
+    heading = soup.find(lambda t: t.name in ("h2", "h3") and "Playoff" in t.get_text())
+    if not heading:
+        return [], None
+    table = heading.find_next("table")
+    if not table:
+        return [], None
+
+    games = []
+    tbody = table.find("tbody")
+    rows = tbody.find_all("tr") if tbody else []
+    for row in rows:
+        cells = row.find_all("td")
+        if len(cells) < 7:
+            continue
+        score_text = _text(cells[6])
+        result = _text(cells[7]).strip().upper() if len(cells) > 7 else ""
+        if result not in ("W", "L", "T", "OTL"):
+            result = ""
+        m = re.match(r"(\d+)\s*-\s*(\d+)", score_text)
+        games.append({
+            "date": _text(cells[0]),
+            "time": _text(cells[1]),
+            "facility": _text(cells[2]),
+            "home": _text(cells[4]),
+            "away": _text(cells[5]),
+            "home_score": int(m.group(1)) if m else None,
+            "away_score": int(m.group(2)) if m else None,
+            "result": result,
+            "played": bool(result) or bool(m),
+        })
+    return games, None
+
+
+def parse_team_history(team_id, timeout=18):
+    """Previous-session records + championship/1st-place awards for a team.
+
+    Source: current roster player_history.cfm rows whose TEAM matches this
+    club, then that session's team standings.cfm (W/L/OTL) and schedule
+    playoff table. Never invents 0-0-0 placeholders.
+    """
+    from concurrent.futures import ThreadPoolExecutor, wait as _wait
+
+    over, e1 = parse_team_overview(team_id)
+    if e1:
+        return None, e1
+    roster, e2 = parse_team_stats(team_id)
+    if e2:
+        return None, e2
+
+    team_name = (over or {}).get("team_name_core") or (over or {}).get("team_name") or ""
+    want = _norm_team_name(team_name)
+
+    tokens = []
+    seen = set()
+    for sec in (roster or {}).get("sections", []):
+        for p in sec.get("players", []):
+            tok = p.get("token")
+            if tok and tok not in seen:
+                seen.add(tok)
+                tokens.append(tok)
+    for g in (roster or {}).get("goalies", []):
+        tok = g.get("token")
+        if tok and tok not in seen:
+            seen.add(tok)
+            tokens.append(tok)
+
+    histories = []
+
+    def fetch_hist(tok):
+        data, err = parse_player_history_by_token(tok)
+        if not err and data:
+            return data
+        return None
+
+    if tokens:
+        ex = ThreadPoolExecutor(max_workers=8)
+        futs = [ex.submit(fetch_hist, tok) for tok in tokens]
+        done, _pending = _wait(futs, timeout=max(6, timeout * 0.55))
+        for f in done:
+            try:
+                data = f.result()
+            except Exception:
+                continue
+            if data:
+                histories.append(data)
+        ex.shutdown(wait=False, cancel_futures=True)
+
+    seasons = {}
+    for hist in histories:
+        for row in hist.get("history") or []:
+            if _norm_team_name(row.get("team")) != want:
+                continue
+            season = (row.get("season") or "").strip()
+            league = (row.get("league") or "").strip()
+            if not season:
+                continue
+            key = (season, league)
+            prev = seasons.get(key)
+            token = row.get("team_token")
+            sort = row.get("season_sort") or 0
+            if not prev or (token and not prev.get("team_token")):
+                seasons[key] = {
+                    "season": season,
+                    "league": league,
+                    "team_token": token,
+                    "season_sort": sort,
+                }
+            elif sort and sort > prev.get("season_sort", 0):
+                prev["season_sort"] = sort
+
+    current_stand, _ = parse_team_standings(team_id)
+    current_row = None
+    if current_stand:
+        current_row = next((s for s in current_stand if s.get("team_id") == team_id), None)
+        if not current_row:
+            current_row = next(
+                (s for s in current_stand if _norm_team_name(s.get("team")) == want),
+                None,
+            )
+
+    def _same_record(a, b):
+        if not a or not b:
+            return False
+        return (a.get("gp"), a.get("w"), a.get("l"), a.get("otl"), a.get("pts")) == (
+            b.get("gp"), b.get("w"), b.get("l"), b.get("otl"), b.get("pts"),
+        )
+
+    items = [s for s in seasons.values() if s.get("team_token")]
+    records = []
+    awards = []
+
+    def fetch_season(item):
+        rec_out = None
+        award_list = []
+        tok = item["team_token"]
+        stand, _e_s = parse_team_standings(tok)
+        playoffs, _e_p = parse_team_playoff_results(tok)
+        row = None
+        rank = None
+        if stand:
+            for i, s in enumerate(stand, 1):
+                if _norm_team_name(s.get("team")) == want:
+                    row = s
+                    rank = i
+                    break
+        # Skip unpublished / empty sessions (do not emit fake 0-0-0).
+        if not row or not row.get("gp"):
+            return None, []
+        rec = {
+            "season": item["season"],
+            "league": item["league"],
+            "gp": row.get("gp", 0),
+            "w": row.get("w", 0),
+            "l": row.get("l", 0),
+            "otl": row.get("otl", 0),
+            "pts": row.get("pts", 0),
+            "gf": row.get("gf", 0),
+            "ga": row.get("ga", 0),
+            "rank": rank,
+            "teams": len(stand) if stand else None,
+            "record": f"{row.get('w', 0)}-{row.get('l', 0)}-{row.get('otl', 0)}",
+            "is_current": _same_record(row, current_row),
+            "season_sort": item.get("season_sort") or 0,
+        }
+        playoffs = playoffs or []
+        played_po = [g for g in playoffs if g.get("played")]
+        rec["playoff_games"] = len(played_po)
+        rec["playoff_record"] = None
+        if played_po:
+            pw = sum(1 for g in played_po if g.get("result") == "W")
+            pl = sum(1 for g in played_po if g.get("result") == "L")
+            pt = sum(1 for g in played_po if g.get("result") in ("T", "OTL"))
+            rec["playoff_record"] = f"{pw}-{pl}-{pt}" if pt else f"{pw}-{pl}"
+        complete = bool(playoffs) and all(g.get("played") for g in playoffs)
+        last = played_po[-1] if played_po else None
+        champion = bool(complete and last and last.get("result") == "W")
+        first_place = rank == 1
+        rec["champion"] = champion
+        rec["first_place"] = first_place
+        rec_out = rec
+        if champion:
+            last_opp = None
+            score = None
+            if last:
+                hs, aws = last.get("home_score"), last.get("away_score")
+                if _norm_team_name(last.get("home")) == want:
+                    last_opp = last.get("away")
+                    if hs is not None and aws is not None:
+                        score = f"{hs}-{aws}"
+                else:
+                    last_opp = last.get("home")
+                    if hs is not None and aws is not None:
+                        score = f"{aws}-{hs}"
+            award_list.append({
+                "kind": "champion",
+                "title": "Session champion",
+                "season": item["season"],
+                "league": item["league"],
+                "source": "playoff",
+                "detail": (
+                    f"Won final playoff game vs {last_opp}"
+                    if last_opp else "Won the session playoff"
+                ),
+                "score": score,
+            })
+        if first_place:
+            award_list.append({
+                "kind": "first_place",
+                "title": "1st place",
+                "season": item["season"],
+                "league": item["league"],
+                "source": "standings",
+                "detail": f"Finished 1st of {len(stand)} in regular-season standings",
+                "score": None,
+            })
+        return rec_out, award_list
+
+    if items:
+        remain = max(4, timeout * 0.4)
+        ex = ThreadPoolExecutor(max_workers=6)
+        futs = [ex.submit(fetch_season, it) for it in items]
+        done, _pending = _wait(futs, timeout=remain)
+        for f in done:
+            try:
+                rec, award_list = f.result()
+            except Exception:
+                continue
+            if rec:
+                records.append(rec)
+            if award_list:
+                awards.extend(award_list)
+        ex.shutdown(wait=False, cancel_futures=True)
+
+    records.sort(key=lambda r: r.get("season_sort") or 0, reverse=True)
+    seen_aw = set()
+    uniq_awards = []
+    for a in awards:
+        k = (a.get("kind"), a.get("season"), a.get("league"))
+        if k in seen_aw:
+            continue
+        seen_aw.add(k)
+        uniq_awards.append(a)
+    uniq_awards.sort(key=lambda a: a.get("season") or "", reverse=True)
+
+    previous = [r for r in records if not r.get("is_current")]
+    return {
+        "team_name": team_name,
+        "previous": previous,
+        "sessions": records,
+        "awards": uniq_awards,
+        "partial": bool(tokens) and len(histories) < len(tokens),
+    }, None
