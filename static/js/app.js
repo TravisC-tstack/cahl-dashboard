@@ -5,7 +5,7 @@ window.addEventListener('pageshow', e => {
 });
 
 // Version guard: if the cached HTML and JS disagree, reload once to resync.
-const JS_VERSION = 40;
+const JS_VERSION = 42;
 if (window.APP_VERSION && window.APP_VERSION !== JS_VERSION && !sessionStorage.getItem('vresync')) {
   sessionStorage.setItem('vresync', '1');
   location.reload();
