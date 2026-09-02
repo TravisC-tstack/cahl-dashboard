@@ -5,7 +5,7 @@ window.addEventListener('pageshow', e => {
 });
 
 // Version guard: if the cached HTML and JS disagree, reload once to resync.
-const JS_VERSION = 38;
+const JS_VERSION = 39;
 if (window.APP_VERSION && window.APP_VERSION !== JS_VERSION && !sessionStorage.getItem('vresync')) {
   sessionStorage.setItem('vresync', '1');
   location.reload();
@@ -39,6 +39,7 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
       teamsLeague: '',
       allTeams: [],
       allTeamsLoading: false,
+      teamsError: false,
       allPlayers: [],
       allPlayersLoading: false,
       playersError: false,
@@ -247,18 +248,34 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
       </div>`;
     }
 
-    async function loadAllTeams() {
-      if (state.allTeams.length || state.allTeamsLoading) return;
+    async function loadAllTeams(force=false) {
+      if (state.allTeamsLoading) return;
+      if (state.allTeams.length && !force) return;
       state.allTeamsLoading = true;
+      state.teamsError = false;
+      const live = $('#teamSearch');
+      if (live && live.value.trim()) renderTypeahead(live);
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 25000);
       try {
-        const res = await fetch('/api/teams');
+        const res = await fetch('/api/teams', { signal: ctrl.signal, cache: 'no-store' });
         const data = await res.json();
-        if (Array.isArray(data)) state.allTeams = data;
-      } catch (e) { /* typeahead keeps showing loading */ }
-      state.allTeamsLoading = false;
-      // refresh any visible dropdown now that data arrived
+        const list = Array.isArray(data) ? data : (data && data.teams);
+        if (Array.isArray(list) && list.length) {
+          state.allTeams = list;
+          state.teamsError = false;
+        } else {
+          state.allTeams = Array.isArray(list) ? list : [];
+          state.teamsError = (data && data.error) ? data.error : 'No teams returned';
+        }
+      } catch (e) {
+        state.teamsError = (e && e.name === 'AbortError') ? 'Teams request timed out' : 'Couldn\u2019t load teams';
+      } finally {
+        clearTimeout(timer);
+        state.allTeamsLoading = false;
+      }
       const input = $('#teamSearch');
-      if (input && input.value.trim()) input.dispatchEvent(new Event('input', { bubbles: true }));
+      if (input && input.value.trim()) renderTypeahead(input);
     }
 
     async function loadAllPlayers(force=false) {
@@ -339,8 +356,12 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
       const q = input.value.trim().toLowerCase();
       if (!q) { box.innerHTML = ''; taClose(input, box); return; }
       const matches = state.allTeams.filter(t => t.name.toLowerCase().includes(q)).slice(0, 8);
-      if (!state.allTeams.length) {
+      if (state.allTeamsLoading && !state.allTeams.length) {
         box.innerHTML = '<div class="typeahead-item muted">Loading teams\u2026</div>';
+      } else if (state.teamsError && !state.allTeams.length) {
+        box.innerHTML = '<div class="typeahead-item" data-tretry><span class="ta-name">' + esc(state.teamsError) + ' \u2014 tap to retry</span></div>';
+      } else if (!state.allTeams.length) {
+        box.innerHTML = '<div class="typeahead-item" data-tretry><span class="ta-name">No teams loaded \u2014 tap to retry</span></div>';
       } else if (!matches.length) {
         box.innerHTML = '<div class="typeahead-item muted">No teams match</div>';
       } else {
@@ -1471,6 +1492,7 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
         setMainHtml(html);
         // typeahead is delegated globally — no per-render binding needed
       }
+      loadAllTeams();
     }
 
     async function loadTeamContent(teamId, refresh=false) {
@@ -2036,6 +2058,11 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
       const retryEl = e.target.closest('[data-pretry]');
       if (retryEl) {
         loadAllPlayers(true);
+        return;
+      }
+      const tretry = e.target.closest('[data-tretry]');
+      if (tretry) {
+        loadAllTeams(true);
         return;
       }
 

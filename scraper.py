@@ -91,12 +91,56 @@ def _extract_id(href, field):
     return m.group(1) if m else None
 
 
+def _query_token(href):
+    """Bare opaque token after ? (chillerstats dropped named LeagueID/TeamID params)."""
+    if not href or "?" not in href:
+        return None
+    q = href.split("?", 1)[1].split("#", 1)[0]
+    first = q.split("&")[0].strip()
+    if first and "=" not in first:
+        return first
+    return None
+
+
+def _is_opaque_id(ident):
+    return bool(re.fullmatch(r"[A-Fa-f0-9]{32,}", str(ident or "")))
+
+
+def _resource_qs(legacy_param, ident):
+    ident = str(ident or "")
+    if _is_opaque_id(ident):
+        return ident
+    return f"{legacy_param}={ident}"
+
+
 def _team_id(href):
-    return _extract_id(href, "TeamID")
+    named = _extract_id(href, "TeamID")
+    if named:
+        return named
+    if not href:
+        return None
+    low = href.lower()
+    if "/team/" in low or low.startswith("team/") or "team/index.cfm" in low:
+        return _query_token(href)
+    return None
+
+
+def _league_id(href):
+    named = _extract_id(href, "LeagueID")
+    if named:
+        return named
+    if href and "dashboard.cfm" in href.lower():
+        return _query_token(href)
+    return None
 
 
 def _player_id(href):
-    return _extract_id(href, "PlayerID")
+    named = _extract_id(href, "PlayerID")
+    if named:
+        return named
+    if href and "player_history.cfm" in href.lower():
+        return _query_token(href)
+    return None
 
 
 def _score_to_int(s):
@@ -177,8 +221,8 @@ def parse_homepage():
     seen = set()
     for a in soup.find_all("a", href=True):
         href = a["href"]
-        if "dashboard.cfm?LeagueID=" in href:
-            lid = _extract_id(href, "LeagueID")
+        if "dashboard.cfm?" in href:
+            lid = _league_id(href)
             if lid and lid not in seen:
                 seen.add(lid)
                 txt = _text(a)
@@ -285,7 +329,7 @@ def _parse_games_section(soup, section_heading):
 
 
 def parse_dashboard(league_id, fresh=False):
-    soup, err = get_soup(f"/dashboard.cfm?LeagueID={league_id}", fresh=fresh)
+    soup, err = get_soup("/dashboard.cfm?" + _resource_qs("LeagueID", league_id), fresh=fresh)
     if err:
         return None, err
 
@@ -369,7 +413,7 @@ def parse_dashboard(league_id, fresh=False):
                 if not text_div:
                     # Fallback: choose the div that contains the game links
                     for c in row.find_all("div", recursive=False):
-                        if c.find("a", href=re.compile(r"TeamID=")):
+                        if c.find("a", href=re.compile(r"TeamID=|/team/|team/index\.cfm", re.I)):
                             text_div = c
                             break
                 if not text_div:
@@ -520,7 +564,7 @@ def parse_dashboard(league_id, fresh=False):
 
 
 def parse_team_overview(team_id):
-    soup, err = get_soup(f"/team/?TeamID={team_id}")
+    soup, err = get_soup("/team/?" + _resource_qs("TeamID", team_id))
     if err:
         return None, err
 
@@ -637,7 +681,7 @@ def parse_team_overview(team_id):
 
 
 def parse_team_schedule(team_id, fresh=False):
-    soup, err = get_soup(f"/team/schedule.cfm?TeamID={team_id}", fresh=fresh)
+    soup, err = get_soup("/team/schedule.cfm?" + _resource_qs("TeamID", team_id), fresh=fresh)
     if err:
         return None, err
 
@@ -726,7 +770,7 @@ def parse_team_stats(team_id):
     table, FORWARDS, DEFENSE) and a GOALIES table with W/L/OTL/GA/GAA.
     Returns {"sections": [{label, players}], "goalies": [...]}.
     """
-    soup, err = get_soup(f"/team/stats.cfm?TeamID={team_id}")
+    soup, err = get_soup("/team/stats.cfm?" + _resource_qs("TeamID", team_id))
     if err:
         return None, err
 
@@ -789,7 +833,7 @@ def parse_team_stats(team_id):
 
 
 def parse_team_standings(team_id):
-    soup, err = get_soup(f"/team/standings.cfm?TeamID={team_id}")
+    soup, err = get_soup("/team/standings.cfm?" + _resource_qs("TeamID", team_id))
     if err:
         return None, err
 
@@ -856,19 +900,23 @@ def _parse_player_history_soup(soup):
     return {"name": name, "history": history}
 
 
-def parse_all_teams(max_workers=8):
+def parse_all_teams(max_workers=8, timeout=50):
     """Aggregate every team across all leagues (for global team search).
 
     Fetches each league dashboard in parallel and pulls teams from standings.
-    Returns a list of {id, name, league_id, league_name, day}.
+    Returns a list of {id, name, league_id, league_name}.
+    Soft-times out so /api/teams always answers inside the function limit.
     """
-    from concurrent.futures import ThreadPoolExecutor
+    from concurrent.futures import ThreadPoolExecutor, wait, ALL_COMPLETED
 
     home, err = parse_homepage()
     if err:
         return None, err
 
     leagues = home.get("leagues", [])
+    if not leagues:
+        return None, "No leagues listed on the homepage"
+
     teams = {}
     errors = []
 
@@ -888,11 +936,15 @@ def parse_all_teams(max_workers=8):
                     "league_name": league["name"],
                 }
 
-    with ThreadPoolExecutor(max_workers=max_workers) as ex:
-        list(ex.map(fetch, leagues))
+    ex = ThreadPoolExecutor(max_workers=max_workers)
+    futures = [ex.submit(fetch, league) for league in leagues]
+    wait(futures, timeout=timeout, return_when=ALL_COMPLETED)
+    ex.shutdown(wait=False, cancel_futures=True)
 
     if not teams and errors:
         return None, "; ".join(errors[:3])
+    if not teams:
+        return None, "No teams found (league standings empty or still loading)"
 
     # Sort alphabetically for stable UI
     return sorted(teams.values(), key=lambda t: t["name"].lower()), None
@@ -1460,7 +1512,10 @@ def compute_team_form(games, team_id, standings_row=None):
 
 
 def parse_player_history(team_id, player_id):
-    soup, err = get_soup(f"/team/player_history.cfm?TeamID={team_id}&PlayerID={player_id}")
+    if _is_opaque_id(player_id):
+        soup, err = get_soup("/team/player_history.cfm?" + player_id)
+    else:
+        soup, err = get_soup(f"/team/player_history.cfm?TeamID={team_id}&PlayerID={player_id}")
     if err:
         return None, err
     return _parse_player_history_soup(soup), None

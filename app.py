@@ -142,8 +142,9 @@ def _all_teams_cached():
     data, err = scraper.parse_all_teams()
     if err:
         return None, err
-    _TEAMS_CACHE["data"] = data
-    _TEAMS_CACHE["ts"] = now
+    if data:
+        _TEAMS_CACHE["data"] = data
+        _TEAMS_CACHE["ts"] = now
     return data, None
 
 
@@ -179,9 +180,10 @@ def teams():
     data, err = scraper.parse_all_teams()
     if err:
         return jsonify({"error": err}), 502
-    _TEAMS_CACHE["data"] = data
-    _TEAMS_CACHE["ts"] = now
-    return jsonify(data)
+    if data:
+        _TEAMS_CACHE["data"] = data
+        _TEAMS_CACHE["ts"] = now
+    return jsonify(data or [])
 
 
 _PLAYERS_CACHE = {"data": None, "ts": 0}
