@@ -165,6 +165,7 @@ main {
 
 /* ---------- HEADER: rink-glass command bar ---------- */
 header {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -176,6 +177,15 @@ header {
     var(--bg-raise);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
+}
+/* broadcast identity stripe: the 2px top edge of the page */
+header::before {
+  content: "";
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, var(--union) 0%, var(--accent) 50%, var(--silver) 100%);
+  pointer-events: none;
 }
 html[data-theme="light"] header {
   background:
@@ -196,12 +206,25 @@ html[data-theme="light"] header {
 .brand-home:hover { opacity: 0.85; }
 .brand-home:focus-visible { outline: 2px solid var(--union); outline-offset: 3px; }
 header h1 { font-size: 17px; font-weight: 800; margin: 0; letter-spacing: 0.2px; }
-.brand-text { color: var(--text); font-family: var(--display); font-size: 21px; letter-spacing: 0.04em; }
-.brand-accent {
-  font-weight: 700;
-  background: linear-gradient(100deg, var(--accent) 20%, var(--union) 100%);
-  -webkit-background-clip: text; background-clip: text;
-  -webkit-text-fill-color: transparent; color: transparent;
+/* brand block: broadcast-bug stack — CAHL wordmark over a mono sub-label */
+.brand-block { display: inline-flex; align-items: center; min-width: 0; }
+.brand-stack { display: flex; flex-direction: column; line-height: 1; min-width: 0; }
+.brand-text {
+  color: var(--text);
+  font-family: var(--display);
+  font-weight: 800;
+  font-size: 22px;
+  letter-spacing: 0.05em;
+}
+.brand-sub {
+  margin-top: 2px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 8.5px;
+  font-weight: 600;
+  letter-spacing: 0.34em;
+  text-transform: uppercase;
+  white-space: nowrap;
 }
 .brand-logo { height: 30px; width: auto; margin-right: 8px; filter: drop-shadow(0 2px 6px rgba(0,0,0,0.5)); }
 .brand-mark { width: 20px; height: 20px; vertical-align: -3px; margin-right: 6px; color: var(--accent); }
@@ -1168,3 +1191,330 @@ html[data-theme="dark"] .theme-icon-moon { display: none; }
 /* fade-in for tab content */
 .fade-in { animation: fade-in 0.26s var(--ease) both; }
 @keyframes fade-in { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
+
+/* ---------- MY-TEAM HERO: pride strip ---------- */
+.hero-glow {
+  position: relative;
+  display: inline-block;
+}
+.hero-glow::before {
+  content: "";
+  position: absolute;
+  left: -14%; right: -14%; top: -55%; bottom: -55%;
+  background: radial-gradient(closest-side, rgba(42, 127, 212, 0.28), rgba(42, 127, 212, 0.10) 55%, transparent 78%);
+  filter: blur(10px);
+  z-index: -1;
+  pointer-events: none;
+  animation: hero-glow-breathe 4.5s var(--ease) infinite alternate;
+}
+@keyframes hero-glow-breathe {
+  from { opacity: 0.65; transform: scale(0.97); }
+  to   { opacity: 1;    transform: scale(1.03); }
+}
+/* Team name — pride-strip scale (overrides base 24px; re-shrinks on mobile below) */
+.hero-card .hero-team { font-size: 30px; }
+/* KPI row inside the hero reuses .stat-box grid */
+.hero-kpis .stat-box { flex: 1 1 96px; padding: 11px 8px 9px; }
+.hero-kpis .stat-box .num { font-size: 22px; }
+.hero-kpis .stat-box .num .of { font-family: var(--mono); font-size: 11px; font-weight: 600; color: var(--muted); }
+/* Last-5 chips, big */
+.hero-form-row { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+.hero-form { gap: 7px; }
+.hero-form .form-chip {
+  width: 34px; height: 34px; border-radius: 8px;
+  font-size: 16px; letter-spacing: 0.02em;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+.hero-form .form-chip.otl { width: 44px; font-size: 11px; }
+/* Next game countdown strip */
+.hero-next {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+  margin-top: 11px; padding: 9px 12px;
+  font-family: var(--mono); font-size: 11.5px; font-weight: 600;
+  color: var(--text-2); white-space: nowrap;
+  background: var(--inset); border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+}
+.hero-next-tag {
+  display: inline-flex; align-items: center; gap: 6px;
+  text-transform: uppercase; letter-spacing: 0.16em;
+  color: var(--union); font-size: 9.5px; font-weight: 700;
+}
+.hero-next-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--union);
+  animation: hero-next-pulse 1.8s var(--ease) infinite;
+}
+@keyframes hero-next-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(42, 127, 212, 0.45); }
+  70%  { box-shadow: 0 0 0 7px rgba(42, 127, 212, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(42, 127, 212, 0); }
+}
+.hero-next-sep { color: var(--faint); }
+.hero-next-opp { font-family: var(--display); font-size: 15px; font-weight: 700; color: var(--text); letter-spacing: 0.02em; }
+.hero-next-vs { color: var(--muted); }
+@media (max-width: 480px) {
+  .hero-card .hero-team { font-size: 22px; }
+  .hero-next { font-size: 11px; white-space: normal; }
+  .hero-form .form-chip { width: 30px; height: 30px; font-size: 14px; }
+  .hero-form .form-chip.otl { width: 40px; font-size: 10px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hero-glow::before { animation: none !important; }
+  .hero-next-dot { animation: none !important; }
+}
+
+/* ============================================================
+   POLISH PASS v49.1 — motion & theme polish (swarm build 8/8)
+   ============================================================ */
+
+/* ---- 1. Motion vocabulary: subtle entrances ---- */
+@keyframes rise-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: none; }
+}
+.card, .sb-card { animation: rise-in 0.24s var(--ease) both; }
+/* stagger sidebar scoreboard children, capped at the 5th child's delay */
+.sb-list > *:nth-child(2) { animation-delay: 0.04s; }
+.sb-list > *:nth-child(3) { animation-delay: 0.08s; }
+.sb-list > *:nth-child(4) { animation-delay: 0.12s; }
+.sb-list > *:nth-child(5) { animation-delay: 0.16s; }
+.sb-list > *:nth-child(n+6) { animation-delay: 0.16s; }
+
+/* tab switch: instant but smooth */
+.fade-in { animation-duration: 0.12s; }
+
+/* ---- 2. Theme coverage: components added by swarm agents ----
+   Dark-first base here; light variants below. Structural/size rules
+   are left to the owning agents — these are palette + theme only. */
+.hero-glow {
+  position: absolute; inset: -35% -15% auto -15%; height: 300px;
+  background: radial-gradient(50% 100% at 50% 0%, rgba(42, 127, 212, 0.16), transparent 70%);
+  pointer-events: none; user-select: none;
+}
+.pos-chip {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 22px; height: 18px; padding: 0 6px;
+  border-radius: 4px; border: 1px solid rgba(42, 127, 212, 0.35);
+  background: rgba(42, 127, 212, 0.12); color: var(--union);
+  font-family: var(--mono); font-size: 9.5px; font-weight: 700;
+  letter-spacing: 0.08em; text-transform: uppercase; line-height: 1;
+}
+.cut-line {
+  border: 0; border-top: 1px dashed rgba(255, 93, 110, 0.45);
+  margin: 10px 0;
+}
+.heat-row {
+  display: flex; align-items: stretch; gap: 2px;
+  padding: 6px 8px; border-radius: var(--radius-sm);
+  border-bottom: 1px solid var(--border-soft);
+  transition: background var(--t-fast);
+}
+.heat-row:hover { background: var(--panel-2); }
+.gd-strip {
+  display: flex; height: 6px; border-radius: 3px; overflow: hidden;
+  background: var(--inset); border: 1px solid var(--border-soft);
+}
+.gd-strip > * { height: 100%; border-radius: inherit; background: var(--union); opacity: 0.85; }
+.team-watermark {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  font-family: var(--display); font-weight: 800; letter-spacing: 0.06em; white-space: nowrap;
+  color: var(--union); opacity: 0.05; pointer-events: none; user-select: none;
+}
+.live-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 9px; border-radius: 999px;
+  background: rgba(232, 37, 60, 0.14); border: 1px solid rgba(232, 37, 60, 0.4);
+  color: var(--accent); font-family: var(--mono); font-size: 9.5px;
+  font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; line-height: 1.4;
+}
+.brand-block { flex: 1 1 300px; min-width: 0; display: flex; align-items: center; gap: 12px; }
+.ppg-median {
+  position: absolute; top: -3px; bottom: -3px; left: 50%; width: 0;
+  border-left: 2px dashed rgba(162, 170, 173, 0.7); z-index: 2;
+}
+.lead-pts {
+  font-family: var(--display); font-weight: 800; color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+.elim {
+  display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px;
+  background: rgba(255, 93, 110, 0.11); color: var(--loss);
+  border: 1px solid rgba(255, 93, 110, 0.33);
+  font-family: var(--mono); font-size: 9.5px; font-weight: 700;
+  letter-spacing: 0.08em; text-transform: uppercase; line-height: 1.4;
+}
+html[data-theme="light"] .hero-glow { background: radial-gradient(50% 100% at 50% 0%, rgba(0, 87, 184, 0.10), transparent 70%); }
+html[data-theme="light"] .pos-chip { background: rgba(0, 87, 184, 0.08); border-color: rgba(0, 87, 184, 0.30); }
+html[data-theme="light"] .cut-line { border-top-color: rgba(206, 17, 38, 0.40); }
+html[data-theme="light"] .heat-row:hover { background: var(--panel-3); }
+html[data-theme="light"] .team-watermark { color: var(--union-deep); opacity: 0.06; }
+html[data-theme="light"] .live-pill { background: rgba(206, 17, 38, 0.08); border-color: rgba(206, 17, 38, 0.32); color: var(--loss); }
+html[data-theme="light"] .ppg-median { border-left-color: rgba(13, 27, 46, 0.35); }
+html[data-theme="light"] .lead-pts { color: #a30e1e; }
+html[data-theme="light"] .elim { background: rgba(206, 17, 38, 0.07); border-color: rgba(206, 17, 38, 0.28); }
+
+/* ---- 3. Consistent focus rings ---- */
+.pill:focus-visible, .typeahead-item:focus-visible, tr.link:focus-visible,
+.pal-item:focus-visible, nav a:focus-visible {
+  outline: 2px solid var(--union);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* ---- 4. Hover physics: press ---- */
+.sb-card:active { transform: translateY(-1px) scale(0.995); }
+
+/* ---- 5. Reduced motion: kill everything new ---- */
+@media (prefers-reduced-motion: reduce) {
+  .card, .sb-card, .sb-list > *, .fade-in { animation: none !important; }
+  .sb-list > * { animation-delay: 0s !important; }
+  .sb-card:hover, .sb-card:active { transform: none !important; }
+}
+
+/* ---- 6. Print ---- */
+@media print {
+  .live-pill { display: none !important; }
+  .card, .sb-card, .sb-list > * { animation: none !important; }
+  .ppg-bar { background: #eee !important; border-color: #ccc !important; }
+  .ppg-bar .ppg-fill {
+    background: #999 !important;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  .ppg-median { border-left-color: #666 !important; }
+  .hero-glow, .team-watermark { display: none !important; }
+}
+
+/* ---------- LEAGUE STANDINGS: playoff-race storytelling (v50) ---------- */
+/* Divider row marking the playoff cutoff */
+tr.cut-line td {
+  padding: 0 !important;
+  border-top: 2px solid var(--accent);
+  border-bottom: none !important;
+  background: var(--accent-dim);
+  height: 3px;
+  line-height: 0;
+}
+.cut-label {
+  position: absolute;
+  right: 10px;
+  transform: translateY(-55%);
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  color: var(--accent);
+  background: var(--panel);
+  padding: 1px 6px;
+  border: 1px solid var(--accent-dim);
+  border-radius: 3px;
+}
+tr.cut-line { position: relative; }
+/* Mathematically eliminated teams */
+tr.elim td { opacity: 0.55; }
+tr.elim td .link { text-decoration: none; }
+/* Clinched */
+tr.clinch td { opacity: 1; }
+.clinch-glyph { color: var(--win, #2fd08c); font-size: 11px; font-weight: 700; margin-left: 4px; }
+/* Points leader — first row's pts cell */
+td.lead-pts {
+  font-weight: 800;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+/* Streak chips */
+.strk {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 4px;
+  display: inline-block;
+  line-height: 1.5;
+}
+.strk-w { color: var(--win, #2fd08c); background: rgba(47, 208, 140, 0.12); }
+.strk-l { color: var(--loss, #ff5d6e); background: rgba(255, 93, 110, 0.12); }
+.strk-dash { color: var(--faint, #556); }
+@media (max-width: 640px) {
+  .cut-label { display: none; }
+}
+
+/* ============================================================
+   PLAYERS TAB — signature stats surface (v50)
+   1) TONIGHT'S PACEMAKERS strip   2) ppg-bar median tick
+   3) row-hover name accent        4) position chips
+   ============================================================ */
+
+/* 1) pacemakers: top-3 by PTS as horizontal mini-cards */
+.pacemakers { margin: 2px 0 12px; }
+.pacemakers-label {
+  font-family: var(--mono);
+  font-size: 10.5px; font-weight: 700;
+  letter-spacing: 0.22em;
+  color: var(--accent);
+  margin-bottom: 8px;
+}
+.pacemakers-row { display: flex; gap: 10px; flex-wrap: wrap; }
+.pacemaker {
+  flex: 1 1 150px; min-width: 140px;
+  display: flex; flex-direction: column; gap: 1px;
+  padding: 10px 12px 9px;
+  background: var(--inset);
+  border: 1px solid var(--border-soft);
+  border-left: 3px solid var(--union);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: border-color var(--t-fast), background var(--t-fast);
+}
+.pacemaker:hover { background: var(--panel-2); border-color: var(--border-strong); border-left-color: var(--accent); }
+.pacemaker .pace-name {
+  font-family: var(--display);
+  font-size: 18px; font-weight: 700; line-height: 1.15;
+  letter-spacing: 0.01em; color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.pacemaker .pace-stat {
+  font-family: var(--display);
+  font-size: 26px; font-weight: 700; line-height: 1.1;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.pacemaker .pace-stat small {
+  font-family: var(--mono); font-size: 10px; font-weight: 600;
+  letter-spacing: 0.14em; color: var(--muted); margin-left: 4px;
+}
+.pacemaker .pace-team {
+  font-family: var(--mono);
+  font-size: 10.5px; font-weight: 600;
+  letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* 2) median tick: thin marker on the ppg percentile bar */
+.ppg-bar .ppg-median {
+  position: absolute; top: 1px; bottom: 1px; width: 2px;
+  background: var(--accent);
+  opacity: 0.9;
+  z-index: 1;
+  pointer-events: none;
+}
+
+/* 3) row hover: 2px left accent inset on the name cell */
+.board tbody tr:hover td:first-child {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+/* 4) position chips: tiny mono badges, D/F/G color-coded */
+.pos-chip {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 10px; font-weight: 700;
+  line-height: 1; padding: 3px 5px;
+  border-radius: 4px;
+  letter-spacing: 0.05em;
+  vertical-align: middle;
+}
+.pos-chip.pos-d { color: var(--union); border: 1px solid rgba(42, 127, 212, 0.45); background: rgba(42, 127, 212, 0.12); }
+.pos-chip.pos-f { color: var(--text-2); border: 1px solid var(--border-strong); background: transparent; }
+.pos-chip.pos-g { color: var(--accent); border: 1px solid rgba(232, 37, 60, 0.45); background: rgba(232, 37, 60, 0.12); }

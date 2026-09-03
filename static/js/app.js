@@ -5,7 +5,7 @@ window.addEventListener('pageshow', e => {
 });
 
 // Version guard: if the cached HTML and JS disagree, reload once to resync.
-const JS_VERSION = 49;
+const JS_VERSION = 50;
 if (window.APP_VERSION && window.APP_VERSION !== JS_VERSION && !sessionStorage.getItem('vresync')) {
   sessionStorage.setItem('vresync', '1');
   location.reload();
@@ -420,7 +420,7 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
       return `<div class="team-search">
         <input id="playerSearch" type="text" role="combobox" aria-autocomplete="list" aria-controls="playerSuggest" aria-expanded="false" aria-label="Search for a player" placeholder="Type a player name…" autocomplete="off" autocapitalize="off" spellcheck="false" />
         <div id="playerSuggest" class="typeahead" role="listbox"></div>
-      </div>`;
+      </div><div class="picker-hint">Search any player across all CAHL teams — tap a name for their all-time stats</div>`;
     }
 
     function paItems() {
@@ -567,7 +567,20 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
     function leaderboardHtml() {
       const { level, sortKey, sortDir, showAll } = state.board;
       const LEVELS = [['all', 'All Levels'], ['b', 'B League'], ['c', 'C League'], ['d', 'D League'], ['other', 'Other']];
-      let html = '<div class="card" id="fullLeaderboard"><h2>Full Leaderboard</h2><div class="picker-days">';
+      let html = '<div class="card" id="fullLeaderboard"><h2>Full Leaderboard</h2>';
+      // Signature strip: tonight's pacemakers — top 3 by PTS across the loaded index.
+      if (state.allPlayers.length) {
+        const pace = state.allPlayers.slice().sort((a, b) => (b.pts ?? 0) - (a.pts ?? 0)).slice(0, 3);
+        html += '<div class="pacemakers"><div class="pacemakers-label">TONIGHT\u2019S PACEMAKERS</div><div class="pacemakers-row">'
+          + pace.map((p, i) => `
+            <div class="pacemaker" onclick="selectPlayerToken('${p.token || ''}')">
+              <span class="pace-name">${esc(p.name)}</span>
+              <span class="pace-stat">${p.pts ?? 0}<small>PTS</small></span>
+              <span class="pace-team">${esc(p.team)}</span>
+            </div>`).join('')
+          + '</div></div>';
+      }
+      html += '<div class="picker-days">';
       LEVELS.forEach(([k, label]) => {
         html += `<span class="pill ${level === k ? 'active' : ''}" data-level="${k}" tabindex="0" role="button">${label}</span>`;
       });
@@ -597,6 +610,18 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
       // Scale anchor: 2.0 P/GP is an elite beer-league pace (full width).
       const shownPpg = shown.map(p => p.gp ? p.pts / p.gp : 0);
       const ppgMax = Math.max(2.0, ...shownPpg);
+      // Median tick: thin marker on every bar at the shown cohort's median P/GP.
+      const sortedPpg = shownPpg.slice().sort((a, b) => a - b);
+      const ppgMedian = sortedPpg.length ? sortedPpg[Math.floor(sortedPpg.length / 2)] : 0;
+      const ppgMedianPct = Math.max(0, Math.min(100, ppgMedian / ppgMax * 100));
+      // Position chips: D/F/G color-coded mono badges (defense=union, forward=text, goalie=accent).
+      const POS_KEY = { d: 'pos-d', f: 'pos-f', g: 'pos-g' };
+      const posChip = p => {
+        const raw = (p.position || '').trim();
+        if (!raw || raw === '-') return '-';
+        const k = POS_KEY[raw.charAt(0).toUpperCase()];
+        return k ? `<span class="pos-chip ${k}">${esc(raw.slice(0, 2).toUpperCase())}</span>` : esc(raw);
+      };
       html += shown.map((p, i) => {
         const ppg = p.gp ? p.pts / p.gp : 0;
         const pct = Math.max(4, Math.min(100, ppg / ppgMax * 100));
@@ -605,10 +630,10 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
           <td class="num">${i + 1}</td>
           <td><span class="link">${esc(p.name)}</span></td>
           <td>${esc(p.team)}</td>
-          <td>${esc(p.position || '-')}</td>
+          <td>${posChip(p)}</td>
           <td class="num">${p.gp}</td><td class="num">${p.g}</td><td class="num">${p.a}</td>
           <td class="num">${p.pts}</td>
-          <td class="num"><div class="ppg-bar"><div class="ppg-fill" style="width:${pct.toFixed(1)}%"></div><span class="ppg-val">${p.gp ? ppg.toFixed(2) : '-'}</span></div></td>
+          <td class="num"><div class="ppg-bar"><div class="ppg-fill" style="width:${pct.toFixed(1)}%"></div><span class="ppg-median" style="left:${ppgMedianPct.toFixed(1)}%"></span><span class="ppg-val">${p.gp ? ppg.toFixed(2) : '-'}</span></div></td>
           <td class="num">${p.pim}</td>
         </tr>`;
       }).join('');
@@ -856,6 +881,8 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
     function syncLivePolling(games) {
       const anyLive = (games || []).some(isLiveGame);
       document.body.classList.toggle('has-live', anyLive);
+      const pillLabel = document.getElementById('livePillLabel');
+      if (pillLabel) pillLabel.textContent = anyLive ? 'LIVE' : 'NO GAMES LIVE';
       if (livePollTimer) { clearInterval(livePollTimer); livePollTimer = null; }
       if (!anyLive) return;
       // Do not POST /api/refresh here — that wipes the instance cache and is
@@ -1091,11 +1118,43 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
       const rankIdx = standings.findIndex(s => s.team_id === teamId);
       const rank = rankIdx >= 0 ? rankIdx + 1 : 0;
       const total = standings.length;
+      const rankSuffix = rank === 1 ? 'st' : rank === 2 ? 'nd' : rank === 3 ? 'rd' : 'th';
 
-      let inner = `<div class="hero-top"><span class="hero-team link" onclick="setTab('team')">${esc(over.team_name)}</span>`;
-      if (form.played) inner += `<span class="hero-record">${form.record}${form.streak ? ' · ' + form.streak : ''}</span>`;
-      if (rank) inner += `<span class="hero-rank">${rank}${rank === 1 ? 'st' : rank === 2 ? 'nd' : rank === 3 ? 'rd' : 'th'} of ${total}</span>`;
-      inner += '</div>';
+      // Playoff-race badge (same states as the team tab)
+      const raceBadge = (() => {
+        const r = data.race;
+        if (!r) return '';
+        if (r.status === 'clinched') return '<span class="race-badge clinched">Clinched</span>';
+        if (r.status === 'eliminated') return '<span class="race-badge eliminated">Eliminated</span>';
+        if (r.status === 'playoffs') return '<span class="race-badge playoffs">Playoffs</span>';
+        if (r.status === 'help') return '<span class="race-badge help">Needs help</span>';
+        if (r.status === 'alive' && r.magic > 0) return `<span class="race-badge alive">Magic # ${r.magic}</span>`;
+        return '';
+      })();
+
+      // Team name with union-blue glow behind it — whole name opens the team tab
+      let inner = `<div class="hero-top"><span class="hero-name-wrap hero-glow"><span class="hero-team link" onclick="setTab('team')" title="Open team page">${esc(over.team_name)}</span></span>${raceBadge}</div>`;
+
+      // KPI tiles: Record / Points / Streak / Position / Goal Diff
+      if (form.played) {
+        const s = form.streak || '';
+        const streakClass = s.startsWith('W') ? 'win' : (s.startsWith('L') ? 'loss' : (s.startsWith('O') ? 'otl' : 'tie'));
+        inner += `<div class="record-row hero-kpis">`
+          + `<div class="stat-box"><div class="num">${esc(form.record)}</div><div class="label">Record</div></div>`
+          + `<div class="stat-box"><div class="num">${esc(String(form.points ?? '-'))}</div><div class="label">Points</div></div>`
+          + `<div class="stat-box"><div class="num"><span class="streak-badge ${streakClass}">${esc(s || '\u2014')}</span></div><div class="label">Streak</div></div>`
+          + (rank ? `<div class="stat-box"><div class="num num-of">${rank}${rankSuffix} <span class="of">of ${total}</span></div><div class="label">Position</div></div>` : '')
+          + `<div class="stat-box"><div class="num">${form.goal_diff > 0 ? '+' + form.goal_diff : esc(String(form.goal_diff ?? '-'))}</div><div class="label">Goal Diff</div></div>`
+          + `</div>`;
+
+        // Last 5 results, big chips
+        const chips = (form.form || []).slice(-5);
+        if (chips.length) {
+          inner += `<div class="hero-form-row"><span class="hero-label">Last 5</span><span class="form-chips hero-form">`
+            + chips.map(r => { const rl = String(r).toLowerCase(); return `<span class="form-chip ${rl}" aria-label="${chipLabel(rl)}">${esc(String(r).toUpperCase())}</span>`; }).join('')
+            + `</span></div>`;
+        }
+      }
 
       if (over.recent_result) {
         const r = over.recent_result;
@@ -1107,7 +1166,13 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
       }
       if (over.next_game) {
         const ng = over.next_game;
-        inner += `<div class="hero-line"><span class="hero-label">Next</span> <b>${esc(ng.date || 'TBD')}</b> ${fmtTime(ng.time)} \u00b7 ${esc(ng.facility || 'TBD')} \u00b7 ${ng.home_away === 'Home' ? 'vs' : '@'} ${esc(ng.opponent)}</div>`;
+        inner += `<div class="hero-next">`
+          + `<span class="hero-next-tag"><span class="hero-next-dot"></span>Next</span><span class="hero-next-sep">\u00b7</span>`
+          + `<span>${esc(ng.date || 'TBD')}</span><span class="hero-next-sep">\u00b7</span>`
+          + `<span>${esc(fmtTime(ng.time))}</span><span class="hero-next-sep">\u00b7</span>`
+          + `<span>${esc(ng.facility || 'TBD')}</span><span class="hero-next-sep">\u00b7</span>`
+          + `<span class="hero-next-vs">${ng.home_away === 'Home' ? 'vs' : '@'} <span class="hero-next-opp">${esc(ng.opponent)}</span></span>`
+          + `</div>`;
       }
       el.innerHTML = inner;
     }
@@ -1204,6 +1269,18 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
 
       html += '<div id="leagueSecStandings" class="league-sec" style="display:'+(active==='Standings'?'block':'none')+'">';
       const st2 = state.standingsSort;
+      // Playoff-race storytelling: cutoff from the payload (scraper parses the
+      // "top N teams will qualify" note), streak/status only if rows carry them.
+      const stRows = data.standings || [];
+      const hasStreak = stRows.some(s => s.streak !== undefined && s.streak !== null && s.streak !== '');
+      const raceData = stRows.some(s => s.race || s.status);
+      const cutoff = Math.min(data.playoff_cutoff || 4, stRows.length);
+      const maxGp = stRows.length ? Math.max(...stRows.map(s => s.gp || 0)) : 0;
+      const leadPts = stRows.length ? Math.max(...stRows.map(s => s.pts || 0)) : 0;
+      const sortedSt = sortRows(stRows, st2.key, st2.dir, STANDINGS_VAL);
+      const leadIdx = sortedSt.findIndex(s => (s.pts || 0) === leadPts);
+      const cutRow = cutoff >= 1 && cutoff <= sortedSt.length ? sortedSt[cutoff - 1] : null;
+      const stCols = 8 + (hasStreak ? 1 : 0);
       html += '<table><thead><tr>'
         + sortTh('team', 'Team', st2, 'standings')
         + sortTh('gp', 'GP', st2, 'standings', true)
@@ -1213,13 +1290,34 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
         + sortTh('pts', 'PTS', st2, 'standings', true)
         + sortTh('gf', 'GF', st2, 'standings', true)
         + sortTh('ga', 'GA', st2, 'standings', true)
+        + (hasStreak ? sortTh('streak', 'STRK', st2, 'standings', true) : '')
         + '</tr></thead><tbody>';
-      html += sortRows(data.standings, st2.key, st2.dir, STANDINGS_VAL).map(s => `
-        <tr class="link" onclick="selectTeam('${s.team_id}')">
-          <td><span class="link">${esc(s.team)}</span></td>
+      html += sortedSt.map((s, i) => {
+        // Race status straight from the payload if present; else simple math:
+        // eliminated when max possible points (2/gp) can't reach the cutoff row.
+        const race = raceData ? (s.race || { status: s.status }) : null;
+        const remaining = Math.max(0, maxGp - (s.gp || 0));
+        const elim = race ? race.status === 'eliminated'
+          : (!!cutRow && (s.pts || 0) + 2 * remaining < (cutRow.pts || 0));
+        const clinch = race ? (race.status === 'clinched' || race.status === 'playoffs') : false;
+        const trCls = ['link', clinch ? 'clinch' : '', elim ? 'elim' : ''].filter(Boolean).join(' ');
+        let streakCell = '';
+        if (hasStreak) {
+          const m = /^([WL])(\d+)$/.exec(String(s.streak || ''));
+          streakCell = m
+            ? `<span class="strk ${m[1] === 'W' ? 'strk-w' : 'strk-l'}">${m[1]}${m[2]}</span>`
+            : (s.streak ? esc(s.streak) : '<span class="strk-dash">&ndash;</span>');
+        }
+        const cutLine = (i === cutoff && cutoff > 0 && cutoff < sortedSt.length)
+          ? `<tr class="cut-line"><td colspan="${stCols}"><span class="cut-label">PLAYOFF LINE</span></td></tr>`
+          : '';
+        return cutLine + `<tr class="${trCls}" onclick="selectTeam('${s.team_id}')">
+          <td><span class="link">${esc(s.team)}</span>${clinch ? ' <span class="clinch-glyph" title="Clinched playoff spot">&#10003;</span>' : ''}</td>
           <td class="num">${s.gp}</td><td class="num">${s.w}</td><td class="num">${s.l}</td><td class="num">${s.otl}</td>
-          <td class="num">${s.pts}</td><td class="num">${s.gf}</td><td class="num">${s.ga}</td>
-        </tr>`).join('');
+          <td class="num${i === leadIdx ? ' lead-pts' : ''}">${s.pts}</td><td class="num">${s.gf}</td><td class="num">${s.ga}</td>
+          ${hasStreak ? `<td class="num">${streakCell}</td>` : ''}
+        </tr>`;
+      }).join('');
       html += '</tbody></table></div>';
 
       html += '<div id="leagueSecLeaders" class="league-sec" style="display:'+(active==='Leaders'?'block':'none')+'">';
@@ -1880,8 +1978,7 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
       loadAllPlayers();
 
       // Player lookup at the very top — search any player, tap for all-time stats
-      let html = '<div class="card player-lookup-card"><h2>Player Lookup</h2>' + playerSearchHtml()
-        + '<div class="picker-hint">Search any player across all CAHL teams — tap a name for their all-time stats</div></div>';
+      let html = '<div class="card player-lookup-card"><h2>Player Lookup</h2>' + playerSearchHtml() + '</div>';
 
       // Full sortable leaderboard with level filters
       html += leaderboardHtml();
@@ -2033,30 +2130,52 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
       let html = `<div class="card"><h2>Analytics · ${data.league_name}</h2>`;
       html += changeLeagueHtml();
 
-      // Points leaders mini chart
-      const maxPts = Math.max(...data.standings.map(s => s.pts), 1);
-      html += '<h3>Standings by Points</h3>';
-      html += data.standings.map(s => `
-        <div style="margin-bottom:8px" onclick="selectTeam('${s.team_id}')">
-          <div style="display:flex;justify-content:space-between;font-size:13px"><span class="link">${esc(s.team)}</span><span>${s.pts} pts</span></div>
-          <div class="bar"><div class="fill gf" style="width:${(s.pts / maxPts * 100).toFixed(1)}%"></div></div>
-        </div>`).join('');
+      // Sorted once: points desc, goal diff tiebreak
+      const standings = (data.standings || []).slice().sort((a, b) => (b.pts - a.pts) || ((b.gf - b.ga) - (a.gf - a.ga)));
 
-      // Goals for vs against
-      const maxG = Math.max(...data.standings.map(s => Math.max(s.gf, s.ga)), 1);
-      html += '<h3 style="margin-top:18px">Goals For vs Against</h3>';
-      html += data.standings.slice(0, 8).map(s => `
-        <div style="margin-bottom:10px" onclick="selectTeam('${s.team_id}')">
-          <div style="display:flex;justify-content:space-between;font-size:13px"><span class="link">${esc(s.team)}</span><span><span style="color:var(--accent-2)">GF ${s.gf}</span> / <span style="color:var(--danger)">GA ${s.ga}</span></span></div>
-          <div class="bar" title="GF green, GA red"><div class="fill gf" style="width:${(s.gf / (s.gf + s.ga || 1) * 100).toFixed(1)}%"></div><div class="fill ga" style="width:${(s.ga / (s.gf + s.ga || 1) * 100).toFixed(1)}%"></div></div>
-        </div>`).join('');
+      // SEASON HEAT — top 8 teams by points, pure-CSS bar race (no chart libs)
+      if (standings.length) {
+        const top8 = standings.slice(0, 8);
+        const maxPts = Math.max(...top8.map(s => s.pts), 1);
+        html += '<h3>SEASON HEAT</h3><div class="heat-chart">';
+        html += top8.map((s, i) => {
+          const pct = Math.max(2, Math.round((s.pts / maxPts) * 1000) / 10);
+          return `<div class="heat-row" title="${esc(s.team)} \u2014 ${s.pts} pts in ${s.gp} GP" onclick="selectTeam('${s.team_id}')">` +
+            `<span class="heat-name">${esc(s.team)}</span>` +
+            `<span class="heat-track"><span class="heat-bar${i === 0 ? ' heat-bar--lead' : ''}" data-w="${pct}" style="width:0%">` +
+            `<span class="heat-val">${s.pts}</span></span></span></div>`;
+        }).join('');
+        html += '</div>';
 
-      // Top scorers
-      html += '<h3 style="margin-top:18px">Top Scorers</h3><table><thead><tr><th>Player</th><th>Team</th><th class="num">Pts</th></tr></thead><tbody>';
-      html += data.leaders.points.map(p => `<tr class="link" onclick="selectPlayer('${p.team_id}','${p.player_id}')"><td><span class="link">${esc(p.name)}</span></td><td>${esc(p.team)}</td><td class="num">${p.value}</td></tr>`).join('');
+        // GOAL DIFF — dots scattered around the .500 line (left = under, red; right = over, blue)
+        const gdMax = Math.max(...standings.map(s => Math.abs(s.gf - s.ga)), 1);
+        const abbrev = (name) => {
+          const w = String(name || '?').trim().split(/\s+/);
+          return (w.length >= 3 ? w[0][0] + w[1][0] + w[2][0] : w.length === 2 ? w[0][0] + w[1][0] : w[0].slice(0, 3)).toUpperCase();
+        };
+        html += '<h3>GOAL DIFF</h3><div class="gd-strip"><span class="gd-line" aria-hidden="true"></span><span class="gd-line-label">.500</span>';
+        html += standings.map((s, i) => {
+          const gd = s.gf - s.ga;
+          const x = Math.min(97, Math.max(3, 50 + (gd / gdMax) * 47)).toFixed(1);
+          const tone = gd > 0 ? 'pos' : (gd < 0 ? 'neg' : 'zero');
+          const sign = gd > 0 ? '+' : '';
+          return `<span class="gd-team gd-lane-${i % 2}" style="left:${x}%" title="${esc(s.team)} ${sign}${gd} (${s.gf} GF / ${s.ga} GA)">` +
+            `<span class="gd-dot gd-dot--${tone}"></span><span class="gd-abbr">${abbrev(s.team)}</span></span>`;
+        }).join('');
+        html += `</div><div class="viz-hint">LEFT of line = under .500 (red) \u00b7 RIGHT = over (blue)</div>`;
+      }
+
+      // League leaders — kept, restyled with mono position chips
+      const leaders = data.leaders || {};
+      html += '<h3>Top Scorers</h3><table><thead><tr><th>Player</th><th>Team</th><th class="num">Pts</th></tr></thead><tbody>';
+      html += (leaders.points || []).map((p, i) => `<tr class="link" onclick="selectPlayer('${p.team_id}','${p.player_id}')"><td><span class="pos-chip${i === 0 ? ' pos-chip--1' : (i < 3 ? ' pos-chip--2' : '')}">${i + 1}</span><span class="link">${esc(p.name)}</span></td><td>${esc(p.team)}</td><td class="num">${p.value}</td></tr>`).join('');
       html += '</tbody></table></div>';
 
       setMainHtml(html);
+      // Grow the heat bars in via CSS transition (snaps instantly under reduced motion)
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        $main.querySelectorAll('.heat-bar[data-w]').forEach(el => { el.style.width = el.dataset.w + '%'; });
+      }));
     }
 
     // Toast + screen-reader announcements
@@ -2435,6 +2554,12 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
           state.cache = {};
           loadActiveTab(true);
         }, 30000);
+      }
+      // Broadcast-bug data stamp in the nav footer: "tonight HH:MM".
+      const stampEl = document.getElementById('dataStamp');
+      if (stampEl) {
+        const hhmm = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        stampEl.textContent = 'tonight ' + hhmm;
       }
       setTab(state.tab);
       // Prefetch teams only. Player lookup uses /api/players/lookup so a

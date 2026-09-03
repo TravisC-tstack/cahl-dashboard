@@ -40,7 +40,7 @@
   <meta name="twitter:title" content="CAHL Dashboard" />
   <meta name="twitter:description" content="Live scores, standings, rosters, and all-time player stats for Chiller Adult Hockey League." />
   <meta name="twitter:image" content="https://cahl.neural-forge.io/static/img/icon-512.png" />
-  <link rel="stylesheet" href="/static/css/style.css?v=49" />
+  <link rel="stylesheet" href="/static/css/style.css?v=50" />
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
@@ -73,7 +73,12 @@
             <path d="M14 21h5.5" />
             <circle cx="6.5" cy="18.5" r="2.5" />
           </svg>
-          <span class="brand-text">CAHL<span class="brand-accent"> Dashboard</span></span>
+          <span class="brand-block">
+            <span class="brand-stack">
+              <span class="brand-text">CAHL</span>
+              <span class="brand-sub">Dashboard</span>
+            </span>
+          </span>
         </a>
       </h1>
       <div class="controls">
@@ -88,12 +93,14 @@
           <svg class="theme-icon theme-icon-sun" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
         </button>
         <button id="refreshBtn" class="ghost small" title="Refresh latest scores and stats" aria-label="Refresh latest scores and stats">Refresh</button>
-        <label class="switch" title="Toggle live auto-refresh">
-          <input type="checkbox" id="autoToggle" aria-label="Toggle live auto-refresh" />
-          <span class="toggle"></span>
-          <span>Live</span>
-        </label>
-        <span class="live-dot" title="Game in progress — scores auto-refreshing every 30s"></span>
+        <span id="livePill" class="live-pill">
+          <label class="switch" title="Toggle live auto-refresh">
+            <input type="checkbox" id="autoToggle" aria-label="Toggle live auto-refresh" />
+            <span class="toggle"></span>
+          </label>
+          <span id="livePillLabel" class="live-pill-label" aria-live="polite">NO GAMES LIVE</span>
+          <span class="live-dot" title="Game in progress — scores auto-refreshing every 30s" aria-hidden="true"></span>
+        </span>
       </div>
     </header>
 
@@ -120,10 +127,11 @@
         <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
         Analytics
       </a>
+      <p class="data-note">DATA · CHILLERSTATS.COM · UPDATED <span id="dataStamp">tonight</span></p>
     </nav>
   </div>
 
   <script>window.APP_VERSION = 43;</script>
-  <script src="/static/js/app.js?v=49"></script>
+  <script src="/static/js/app.js?v=50"></script>
 </body>
 </html>
