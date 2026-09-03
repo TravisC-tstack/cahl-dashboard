@@ -7,7 +7,7 @@ window.addEventListener('pageshow', e => {
 // Frontend version — shown in the badge. The old window.APP_VERSION
 // dual-check is gone (index.html's stale copy caused a reload on every
 // boot); /api/version self-heal below is the only reload path now.
-const JS_VERSION = 53;
+const JS_VERSION = 54;
 
 // Self-heal: if the server is running a NEWER frontend than this cached JS, reload fresh.
 fetch('/api/version').then(r => r.json()).then(v => {
