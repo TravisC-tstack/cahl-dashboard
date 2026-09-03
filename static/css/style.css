@@ -1594,7 +1594,14 @@ th[data-sort] {
 
 th[data-sort]:hover { color: var(--accent); }
 
-.player-lookup-card { border-left: 3px solid var(--accent); }
+.player-lookup-card {
+  border-left: 3px solid var(--accent);
+  /* .card's backdrop-filter makes each card its own stacking context, so the
+     open typeahead would paint beneath the leaderboard card that follows in
+     the DOM. Lift this card (dropdown included) above its siblings. */
+  position: relative;
+  z-index: 2;
+}
 
 /* ============================================================
    Pointer-aware adjustments (site knows touch vs mouse)
