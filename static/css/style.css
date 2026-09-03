@@ -1542,24 +1542,16 @@ td.lead-pts {
    FIX PASS R1-B — Today tab + hero cleanup (jury round 1)
    ============================================================ */
 
-/* (1) .today-cols-head: real grid matching the row layout.
-   Rows are grid areas time/home/board/away with rink in the board
-   cell, so the header mirrors that. Below 600px the header hides —
+/* (1) .today-cols-head: desktop-only. The ONLY styled header grid is the
+   11-track one at min-width:900px (R1-F below). The old 3-col base rule
+   (56px 1fr auto + two-row areas) was dead at >=900px (fully overridden)
+   and structurally broken below 600px — its 0,2,0 specificity beat the
+   hide rule, leaving a 3-col grid header floating over the stacked
+   <480px cards (wrapped 'Away', orphan 'Score', clipped third card at
+   390px, jury R2). Removed; below 900px the header hides entirely —
    a hidden header beats a smashed one. */
-.today-list-cols .today-cols-head {
-  display: grid;
-  grid-template-columns: 56px 1fr auto;
-  grid-template-areas: "time home board" "time away board";
-  column-gap: 10px;
-  padding: 6px 6px 8px;
-  border-bottom: 1px solid var(--border-soft);
-}
-.today-cols-head span:nth-child(1) { grid-area: time; }
-.today-cols-head span:nth-child(2) { grid-area: home; }
-.today-cols-head span:nth-child(3) { grid-area: board; text-align: left; }
-.today-cols-head span:nth-child(4) { grid-area: away; }
 .today-cols-head span:nth-child(5) { display: none; }
-@media (max-width: 600px) {
+@media (max-width: 899px) {
   .today-cols-head { display: none; }
 }
 

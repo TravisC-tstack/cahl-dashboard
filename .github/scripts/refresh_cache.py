@@ -92,12 +92,15 @@ def main():
         # instead of re-scraping every roster on Vercel's next cold start.
         # full=1 extends the server's fan-out window past the UI's 18s soft cap.
         warm.append("/api/players?full=1")
+        # Team index fans out to every roster too — cold /api/teams was 25s+
+        # on Vercel (jury R2 interaction lens), so warm it on every baseline.
+        warm.append("/api/teams")
     for path in warm:
         t0 = datetime.now()
         try:
-            # /api/players fans out to every roster and can run minutes cold;
-            # give it headroom so the hourly warm actually completes.
-            get(path, timeout=420 if path == "/api/players" else 90)
+            # /api/players and /api/teams fan out to every roster and can run
+            # minutes cold; give both headroom so the baseline warm completes.
+            get(path, timeout=420 if path.split("?")[0] in ("/api/players", "/api/teams") else 90)
             print(f"warmed {path} in {(datetime.now() - t0).total_seconds():.1f}s")
         except Exception as e:  # keep going; next run will retry
             print(f"warm {path} failed: {e}")

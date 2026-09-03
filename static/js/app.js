@@ -4,12 +4,10 @@ window.addEventListener('pageshow', e => {
   if (e.persisted) location.reload();
 });
 
-// Version guard: if the cached HTML and JS disagree, reload once to resync.
-const JS_VERSION = 51;
-if (window.APP_VERSION && window.APP_VERSION !== JS_VERSION && !sessionStorage.getItem('vresync')) {
-  sessionStorage.setItem('vresync', '1');
-  location.reload();
-}
+// Frontend version — shown in the badge. The old window.APP_VERSION
+// dual-check is gone (index.html's stale copy caused a reload on every
+// boot); /api/version self-heal below is the only reload path now.
+const JS_VERSION = 52;
 
 // Self-heal: if the server is running a NEWER frontend than this cached JS, reload fresh.
 fetch('/api/version').then(r => r.json()).then(v => {
@@ -845,15 +843,20 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
       $refresh.disabled = true;
       $refresh.textContent = '';
       $refresh.appendChild(Object.assign(document.createElement('span'), { className: 'spinner' }));
-      // Light scope: clears page caches so scores/sheets refetch, keeps big aggregates warm
-      await fetch('/api/refresh?scope=scores', { method: 'POST' });
-      state.cache = {};
-      state._sessions = null;
-      state.allTeams = [];
-      state.allPlayers = [];
-      await loadActiveTab(true);
-      $refresh.innerHTML = 'Refresh';
-      $refresh.disabled = false;
+      try {
+        // Light scope: clears page caches so scores/sheets refetch, keeps big aggregates warm
+        await fetch('/api/refresh?scope=scores', { method: 'POST' });
+        state.cache = {};
+        state._sessions = null;
+        state.allTeams = [];
+        state.allPlayers = [];
+        await loadActiveTab(true);
+      } finally {
+        // Restore the button even when the refresh/render throws, so a failed
+        // refresh can never leave it permanently disabled with a spinner.
+        $refresh.innerHTML = 'Refresh';
+        $refresh.disabled = false;
+      }
       const t = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
       showToast(`Updated ${t}`);
     }
@@ -920,6 +923,19 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
 
     const TAB_HASH = { team: 'team', league: 'league', players: 'players', analytics: 'analytics' };
 
+    // Back/forward support: browser history changes the hash without any
+    // click, so listen for hashchange and re-render the matching tab. The
+    // h === TAB_HASH[state.tab] check is the re-entrancy guard — it ignores
+    // no-op transitions (e.g. a hash edit that only changes case, #Team) and
+    // hash restores that already match the active tab, preventing re-render
+    // loops. setTab itself uses replaceState, which never fires hashchange.
+    window.addEventListener('hashchange', () => {
+      const h = (location.hash || '').slice(1).trim().toLowerCase();
+      if (h === TAB_HASH[state.tab]) return;
+      if (!h) { if (state.tab !== 'today') setTab('today'); return; }
+      if (TABS.includes(h)) setTab(h);
+    });
+
     function setTab(tab) {
       state.tab = tab;
       navLinks.forEach(a => a.classList.toggle('active', a.dataset.tab === tab));
@@ -934,15 +950,27 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
       $main.focus({ preventScroll: true }); // move keyboard focus into content on tab switch
     }
 
+    let _renderToken = 0;
     async function loadActiveTab(refresh=false) {
+      // Render-token guard: each call invalidates any in-flight call. After
+      // every await, a stale call detects a newer token and bails before it
+      // can paint its (older) response over the newer tab's content.
+      const token = ++_renderToken;
+      const stale = () => token !== _renderToken;
       $main.innerHTML = skeletonHtml(4);
       try {
         if (state.tab === 'today') await renderToday(refresh);
+        if (stale()) return;
         if (state.tab === 'league') await renderLeague(refresh);
+        if (stale()) return;
         if (state.tab === 'team') await renderTeam(refresh);
+        if (stale()) return;
         if (state.tab === 'players') await renderPlayers(refresh);
+        if (stale()) return;
         if (state.tab === 'analytics') await renderAnalytics(refresh);
+        if (stale()) return;
       } catch (e) {
+        if (stale()) return; // a newer tab owns the canvas — don't paint errors over it
         $main.innerHTML = `<div class="error">Error loading tab: ${e.message}</div>`;
       }
     }
@@ -1884,7 +1912,12 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
 
       if (over.next_game) {
         const ng = over.next_game;
-        html += `<div class="game-card"><div class="meta">Next Game ${ng.home_away}</div><div class="matchup"><div class="team">${esc(over.team_name)}</div><span class="vs">vs</span><div class="team">${esc(ng.opponent)}</div></div><div class="meta">${esc(ng.date || 'TBD')} · ${fmtTime(ng.time)} · ${esc(ng.facility || 'TBD')}</div></div>`;
+        // Suppress the 'vs' dangle when the scraper returned no opponent name.
+        const opp = (ng.opponent || '').trim();
+        const matchupHtml = opp
+          ? `<div class="team">${esc(over.team_name)}</div><span class="vs">vs</span><div class="team">${esc(opp)}</div>`
+          : `<div class="team">${esc(over.team_name)}</div>`;
+        html += `<div class="game-card"><div class="meta">Next Game ${ng.home_away}</div><div class="matchup">${matchupHtml}</div><div class="meta">${esc(ng.date || 'TBD')} · ${fmtTime(ng.time)} · ${esc(ng.facility || 'TBD')}</div></div>`;
       }
 
       if (over.recent_result) {
@@ -2680,7 +2713,9 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
       }
       // Hash deep-link restore: read the hash BEFORE setTab (setTab's
       // replaceState strips it when restoring the default 'today' tab).
-      const bootHash = location.hash.slice(1);
+      // Lowercased first so deep links like #Team/#LEAGUE are accepted
+      // (TABS/TAB_HASH are lowercase-only).
+      const bootHash = location.hash.slice(1).trim().toLowerCase();
       setTab(state.tab);
       if (TABS.includes(bootHash) && bootHash !== state.tab) setTab(bootHash);
       // Prefetch teams only. Player lookup uses /api/players/lookup so a

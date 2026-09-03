@@ -259,6 +259,13 @@ def parse_homepage():
 
     today = [g for g in today if not _is_scrim_slot(g.get("home"), g.get("away"))]
 
+    # Schedule placeholders like "Bye Week vs Brew Jackets" are not games —
+    # a team's bye shows up as an opponent on chillerstats' slate.
+    _bye = re.compile(r"^bye\s+week$", re.IGNORECASE)
+    today = [g for g in today
+             if not (_bye.match((g.get("home") or "").strip())
+                     or _bye.match((g.get("away") or "").strip()))]
+
     return {"today": today, "leagues": leagues}, None
 
 
