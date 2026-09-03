@@ -5,7 +5,7 @@ window.addEventListener('pageshow', e => {
 });
 
 // Version guard: if the cached HTML and JS disagree, reload once to resync.
-const JS_VERSION = 45;
+const JS_VERSION = 46;
 if (window.APP_VERSION && window.APP_VERSION !== JS_VERSION && !sessionStorage.getItem('vresync')) {
   sessionStorage.setItem('vresync', '1');
   location.reload();
@@ -931,6 +931,14 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
         const hs = scored ? g.home_score : '';
         const as_ = scored ? g.away_score : '';
         const rink = (g.facility || '').replace(/^Chiller\s+/i, '');
+        // Scrimmage slots have no real rosters behind them — muted, non-clickable
+        if (isScrimmageGame(g)) {
+          return `<article class="sb-card" data-status="live" data-scrim="1">
+            <div class="sb-status"><span class="sb-live">LIVE</span><span class="sb-meta">${fmtTime(g.time)}${rink ? ' · ' + esc(rink) : ''}</span></div>
+            <div class="sb-side"><span class="sb-name">${esc(g.home)}</span><span class="sb-num">${hs === '' ? '–' : hs}</span></div>
+            <div class="sb-side"><span class="sb-name">${esc(g.away)}</span><span class="sb-num">${as_ === '' ? '–' : as_}</span></div>
+          </article>`;
+        }
         return `<article class="sb-card" data-status="live">
           <div class="sb-status"><span class="sb-live">LIVE</span><span class="sb-meta">${fmtTime(g.time)}${rink ? ' · ' + esc(rink) : ''}</span></div>
           <div class="sb-side link" onclick="selectTeam('${g.home_id || ''}')"><span class="sb-name">${esc(g.home)}</span><span class="sb-num">${hs === '' ? '–' : hs}</span></div>
@@ -2397,3 +2405,209 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
       // boot-time roster fan-out cannot starve a typed name search.
       loadAllTeams();
     })();
+
+    /* ============================================================
+       ⌘K COMMAND PALETTE — search players / teams / pages.
+       Lives inside the IIFE so it can read state (allTeams,
+       allPlayers) and call the same openers the UI uses.
+       ============================================================ */
+    const kpal = {
+      ov: document.getElementById('kpalOv'),
+      q: document.getElementById('kpalQ'),
+      list: document.getElementById('kpalList'),
+      items: [],
+      sel: 0,
+      open: false,
+      playersTried: false,
+    };
+
+    function kpalEsc(s) {
+      return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+      }[c]));
+    }
+
+    function kpalHi(s, query) {
+      const i = query ? s.toLowerCase().indexOf(query.toLowerCase()) : -1;
+      if (i < 0) return kpalEsc(s);
+      return kpalEsc(s.slice(0, i)) + '<mark>' + kpalEsc(s.slice(i, i + query.length)) + '</mark>' + kpalEsc(s.slice(i + query.length));
+    }
+
+    function kpalEnsureData() {
+      loadAllTeams();
+      // Pull the full player index once (cron keeps it warm; ~5.9k players).
+      if (!kpal.playersTried) {
+        kpal.playersTried = true;
+        loadAllPlayers().catch(() => {});
+      }
+    }
+
+    function kpalNavItems() {
+      return [
+        { kind: 'page', icon: 'T', name: "Today's games", sb: 'page', act: () => setTab('today') },
+        { kind: 'page', icon: 'L', name: 'League standings & scores', sb: 'page', act: () => setTab('league') },
+        { kind: 'page', icon: 'P', name: 'Players & leaderboard', sb: 'page', act: () => setTab('players') },
+        { kind: 'page', icon: 'A', name: 'Analytics', sb: 'page', act: () => setTab('analytics') },
+        { kind: 'page', icon: '★', name: 'My team', sb: 'page', act: () => setTab('team') },
+      ];
+    }
+
+    function kpalQuery(query) {
+      const qq = (query || '').trim().toLowerCase();
+      const teams = (state.allTeams || []);
+      const players = (state.allPlayers || []);
+
+      // index: name → {players, teams} built once per keystroke from caches
+      let items = [];
+      if (!qq) {
+        items = kpalNavItems();
+      } else {
+        const pages = kpalNavItems().filter(p => p.name.toLowerCase().includes(qq));
+        const teamHits = teams
+          .filter(t => (t.name || '').toLowerCase().includes(qq))
+          .slice(0, 6)
+          .map(t => ({ kind: 'team', icon: '≡', name: t.name, id: t.id, sb: 'team page', act: () => window.selectTeam(t.id) }));
+        const playerHits = players
+          .filter(p => (p.name || '').toLowerCase().includes(qq))
+          .sort((a, b) => a.name.toLowerCase().indexOf(qq) - b.name.toLowerCase().indexOf(qq))
+          .slice(0, 8)
+          .map(kpalPlayerItem);
+        items = [...teamHits, ...playerHits, ...pages];
+
+        // Index not loaded yet (cold start): fall back to the fast server
+        // lookup so typed names still return results immediately.
+        if (!playerHits.length && !players.length && qq.length >= 2) {
+          kpalServerLookup(query);
+          if (!kpal.list.querySelector('.pal-searching')) {
+            items = items.concat([{ kind: 'searching', icon: '…', name: 'Searching the league…', sb: '', act: null }]);
+          }
+        }
+      }
+
+      kpal.items = items;
+      kpal.sel = 0;
+      kpalRender(qq);
+    }
+
+    function kpalPlayerItem(p) {
+      const tok = p.token || '';
+      const pid = p.player_id || '';
+      const tid = p.team_id || '';
+      return {
+        kind: 'player', icon: (p.position || '').slice(0, 2).toUpperCase() || '•',
+        name: p.name, team: p.team,
+        sb: p.team || '',
+        act: () => {
+          if (tok) window.selectPlayerToken(tok);
+          else if (pid && tid) window.selectPlayer(tid, pid);
+          else showToast('No profile link for that player');
+        },
+      };
+    }
+
+    let kpalLookupSeq = 0;
+    async function kpalServerLookup(query) {
+      const seq = ++kpalLookupSeq;
+      try {
+        const result = await lookupPlayers(query);
+        if (seq !== kpalLookupSeq || !kpal.open) return;
+        if (kpal.q.value.trim().toLowerCase() !== query.trim().toLowerCase()) return;
+        const hits = (result && result.players) || [];
+        if (!hits.length) return;
+        // Re-run the query — state.allPlayers may now have data; if not,
+        // inject the lookup hits directly as player items.
+        const qq = query.trim().toLowerCase();
+        const idxPlayers = (state.allPlayers || [])
+          .filter(p => (p.name || '').toLowerCase().includes(qq)).slice(0, 8);
+        const playerItems = idxPlayers.length
+          ? idxPlayers.map(kpalPlayerItem)
+          : hits.map(kpalPlayerItem);
+        const pages = kpalNavItems().filter(p => p.name.toLowerCase().includes(qq));
+        const teamHits = (state.allTeams || [])
+          .filter(t => (t.name || '').toLowerCase().includes(qq))
+          .slice(0, 6)
+          .map(t => ({ kind: 'team', icon: '≡', name: t.name, id: t.id, sb: 'team page', act: () => window.selectTeam(t.id) }));
+        kpal.items = [...teamHits, ...playerItems, ...pages];
+        kpal.sel = 0;
+        kpalRender(qq);
+      } catch (e) { /* palette still works with pages/teams */ }
+    }
+
+    function kpalRender(qq) {
+      if (!kpal.items.length) {
+        kpal.list.innerHTML = '<div class="pal-empty">No matches. Try a player or team name.</div>';
+        return;
+      }
+      let html = '', last = '';
+      kpal.items.forEach((it, i) => {
+        const grp = it.kind === 'player' ? 'Players' : it.kind === 'team' ? 'Teams' : it.kind === 'page' ? 'Pages' : 'Tonight';
+        if (grp !== last) { html += `<div class="pal-grp">${grp}</div>`; last = grp; }
+        html += `<div class="pal-item" role="option" data-i="${i}" aria-selected="${i === 0}">
+          <span class="pal-ic${it.kind === 'player' ? ' red' : ''}">${kpalEsc(it.icon)}</span>
+          <span class="pal-nm">${kpalHi(it.name, qq)}</span>
+          <span class="pal-sb">${kpalEsc(it.sb)}</span>
+        </div>`;
+      });
+      kpal.list.innerHTML = html;
+      kpalPaint();
+    }
+
+    function kpalPaint() {
+      kpal.list.querySelectorAll('.pal-item').forEach(el => {
+        el.setAttribute('aria-selected', String(+el.dataset.i === kpal.sel));
+      });
+      const on = kpal.list.querySelector('.pal-item[aria-selected="true"]');
+      if (on) on.scrollIntoView({ block: 'nearest' });
+    }
+
+    function kpalOpen() {
+      kpal.open = true;
+      kpal.ov.classList.add('open');
+      kpal.ov.setAttribute('aria-hidden', 'false');
+      kpal.q.value = '';
+      kpalEnsureData();
+      kpalQuery('');
+      setTimeout(() => kpal.q.focus(), 15);
+    }
+
+    function kpalClose() {
+      kpal.open = false;
+      kpal.ov.classList.remove('open');
+      kpal.ov.setAttribute('aria-hidden', 'true');
+    }
+
+    function kpalToggle() { kpal.open ? kpalClose() : kpalOpen(); }
+
+    function kpalRun() {
+      const it = kpal.items[kpal.sel];
+      kpalClose();
+      if (it && it.act) it.act();
+    }
+
+    document.getElementById('kpalBtn').addEventListener('click', kpalToggle);
+    kpal.ov.addEventListener('click', e => { if (e.target === kpal.ov) kpalClose(); });
+    kpal.q.addEventListener('input', () => kpalQuery(kpal.q.value));
+    kpal.q.addEventListener('keydown', e => {
+      if (e.key === 'ArrowDown') { kpal.sel = Math.min(kpal.sel + 1, kpal.items.length - 1); kpalPaint(); e.preventDefault(); }
+      else if (e.key === 'ArrowUp') { kpal.sel = Math.max(kpal.sel - 1, 0); kpalPaint(); e.preventDefault(); }
+      else if (e.key === 'Enter') { kpalRun(); }
+    });
+    kpal.list.addEventListener('click', e => {
+      const el = e.target.closest('.pal-item');
+      if (!el) return;
+      kpal.sel = +el.dataset.i;
+      kpalRun();
+    });
+    kpal.list.addEventListener('mousemove', e => {
+      const el = e.target.closest('.pal-item');
+      if (el) { kpal.sel = +el.dataset.i; kpalPaint(); }
+    });
+    document.addEventListener('keydown', e => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        kpalToggle();
+      } else if (e.key === 'Escape' && kpal.open) {
+        kpalClose();
+      }
+    });
+    window.__kpal = kpal;
