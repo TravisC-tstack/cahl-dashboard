@@ -324,7 +324,8 @@ def players():
         scraper.index_roster(team, roster, index)
 
     # Keep this well under the function limit so the UI can clear loading.
-    SOFT_TIMEOUT = 18
+    # ?full=1 (cron warm) gets a much longer window to finish every roster.
+    SOFT_TIMEOUT = 90 if request.args.get("full") else 18
     ex = ThreadPoolExecutor(max_workers=16)
     futures = [ex.submit(fetch, team) for team in teams_data]
     done, pending = concurrent.futures.wait(futures, timeout=SOFT_TIMEOUT)

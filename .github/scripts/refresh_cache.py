@@ -90,7 +90,8 @@ def main():
     if baseline_due:
         # Rebuild the all-players index hourly so name search answers instantly
         # instead of re-scraping every roster on Vercel's next cold start.
-        warm.append("/api/players")
+        # full=1 extends the server's fan-out window past the UI's 18s soft cap.
+        warm.append("/api/players?full=1")
     for path in warm:
         t0 = datetime.now()
         try:
