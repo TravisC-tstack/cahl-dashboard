@@ -5,7 +5,7 @@ window.addEventListener('pageshow', e => {
 });
 
 // Version guard: if the cached HTML and JS disagree, reload once to resync.
-const JS_VERSION = 44;
+const JS_VERSION = 45;
 if (window.APP_VERSION && window.APP_VERSION !== JS_VERSION && !sessionStorage.getItem('vresync')) {
   sessionStorage.setItem('vresync', '1');
   location.reload();
@@ -824,6 +824,15 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
     function hasPostedScore(g) {
       return !!(g.played && g.home_score != null && g.away_score != null);
     }
+    // ChillerStats lists some practice/scrimmage ice slots with literal names
+    // like "Team Blue vs Team Red". Real rosters don't exist behind those, so
+    // render them as muted non-links so they don't look like a data bug.
+    function isScrimmageTeam(n) {
+      return /^team\\s+(blue|red|white|black|grey|gray|gold|green|navy|silver|teal|orange|yellow|purple|home|away)$/i.test((n || '').trim());
+    }
+    function isScrimmageGame(g) {
+      return isScrimmageTeam(g.home) && isScrimmageTeam(g.away);
+    }
 
     let livePollTimer = null;
     let livePollInFlight = false;
@@ -937,19 +946,26 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
       const hasScore = hasPostedScore(g);
       const st = gameLiveState(g);
       const stLabel = st === 'live' ? 'LIVE' : st === 'final' ? 'FINAL' : 'UPCOMING';
+      const scrim = isScrimmageGame(g);
       let scoreInner;
       if (hasScore) {
         scoreInner = `<span class="t-score">${g.home_score}\u2013${g.away_score}</span>`;
       } else if (st === 'live') {
         scoreInner = '<span class="t-score live-badge">LIVE</span>';
       } else {
-        scoreInner = '<span class="t-score t-score-empty">vs</span>';
+        scoreInner = scrim ? '<span class="t-score t-score-empty">scrim</span>' : '<span class="t-score t-score-empty">vs</span>';
       }
-      return `<div class="today-row" data-status="${st}">
+      const homeCell = scrim
+        ? `<span class="t-home scrim">${esc(g.home)}</span>`
+        : `<span class="t-home link" onclick="selectTeam('${g.home_id || ''}')">${esc(g.home)}</span>`;
+      const awayCell = scrim
+        ? `<span class="t-away scrim">${esc(g.away)}</span>`
+        : `<span class="t-away link" onclick="selectTeam('${g.away_id || ''}')">${esc(g.away)}</span>`;
+      return `<div class="today-row" data-status="${st}"${scrim ? ' data-scrim="1"' : ''}>
         <span class="t-time">${fmtTime(g.time)}</span>
-        <span class="t-home link" onclick="selectTeam('${g.home_id || ''}')">${esc(g.home)}</span>
+        ${homeCell}
         <span class="t-board">${scoreInner}<span class="status-chip status-${st}">${stLabel}</span></span>
-        <span class="t-away link" onclick="selectTeam('${g.away_id || ''}')">${esc(g.away)}</span>
+        ${awayCell}
         <span class="t-rink">${esc(rink)}</span>
       </div>`;
     }

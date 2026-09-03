@@ -1862,6 +1862,11 @@ html[data-theme="dark"] .theme-icon-moon { display: none; }
 .today-row .t-time { grid-area: time; font-size: 12px; }
 .today-row .t-home { grid-area: home; font-weight: 700; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .today-row .t-away { grid-area: away; font-weight: 700; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Scrimmage slots (literal "Team Blue vs Team Red" names): muted, non-clickable */
+.today-row[data-scrim="1"] { opacity: 0.62; }
+.today-row[data-scrim="1"] .t-home,
+.today-row[data-scrim="1"] .t-away { color: var(--muted); font-weight: 600; font-style: italic; cursor: default; }
+.today-row[data-scrim="1"] .t-score-empty { font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; }
 .today-row .t-board {
   grid-area: board;
   display: flex;
