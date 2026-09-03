@@ -93,18 +93,17 @@
           <svg class="theme-icon theme-icon-sun" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
         </button>
         <button id="refreshBtn" class="ghost small" title="Refresh latest scores and stats" aria-label="Refresh latest scores and stats">Refresh</button>
-        <span id="livePill" class="live-pill">
-          <label class="switch" title="Toggle live auto-refresh">
-            <input type="checkbox" id="autoToggle" aria-label="Toggle live auto-refresh" />
-            <span class="toggle"></span>
-          </label>
+        <label id="livePill" class="live-pill" title="Live status — click to toggle 30s auto-refresh">
+          <input type="checkbox" id="autoToggle" class="sr-only" aria-label="Toggle live auto-refresh" />
+          <span class="live-pill-dot" aria-hidden="true"></span>
           <span id="livePillLabel" class="live-pill-label" aria-live="polite">NO GAMES LIVE</span>
-          <span class="live-dot" title="Game in progress — scores auto-refreshing every 30s" aria-hidden="true"></span>
-        </span>
+        </label>
       </div>
     </header>
 
     <main id="main" role="main" tabindex="-1"></main>
+
+    <p class="data-note">DATA · CHILLERSTATS.COM · UPDATED <span id="dataStamp">—</span></p>
 
     <nav role="navigation" aria-label="Primary">
       <a href="#" class="nav-link active" data-tab="today" aria-label="Today's games" aria-current="page">
@@ -127,7 +126,6 @@
         <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
         Analytics
       </a>
-      <p class="data-note">DATA · CHILLERSTATS.COM · UPDATED <span id="dataStamp">tonight</span></p>
     </nav>
   </div>
 

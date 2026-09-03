@@ -372,6 +372,25 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
 
     // ---- Team search typeahead (fully delegated — re-renders can't leak listeners) ----
     let taIndex = -1;
+    let taDebounceTimer = null;
+    let taLastQuery = '';
+
+    // On a new keystroke (before the debounced render): stale failure text from
+    // the previous query — 'timed out', 'No teams loaded', 'No teams match' —
+    // must never bleed into the new query's dropdown.
+    function taClearStale(input) {
+      const box = $('#teamSuggest');
+      if (!box) return;
+      const q = input.value.trim().toLowerCase();
+      if (!q) { taLastQuery = ''; box.innerHTML = ''; taClose(input, box); return; }
+      if (q === taLastQuery) return;
+      const stale = box.querySelector('.typeahead-item[data-tretry], .typeahead-item.muted');
+      if (stale) {
+        box.innerHTML = state.allTeamsLoading
+          ? '<div class="typeahead-item muted">Loading teams\u2026</div>'
+          : '<div class="typeahead-item muted">Searching\u2026</div>';
+      }
+    }
 
     function taItems() {
       const box = $('#teamSuggest');
@@ -389,11 +408,17 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
       taIndex = -1;
     }
 
-    function renderTypeahead(input) {
+    function renderTypeahead(input, immediate=false) {
       const box = $('#teamSuggest');
       if (!box) return;
       const q = input.value.trim().toLowerCase();
-      if (!q) { box.innerHTML = ''; taClose(input, box); return; }
+      taLastQuery = q;
+      if (!q) { clearTimeout(taDebounceTimer); box.innerHTML = ''; taClose(input, box); return; }
+      if (!immediate) {
+        clearTimeout(taDebounceTimer);
+        taDebounceTimer = setTimeout(() => renderTypeahead(input, true), 180);
+        return;
+      }
       const matches = state.allTeams.filter(t => t.name.toLowerCase().includes(q)).slice(0, 8);
       if (state.allTeamsLoading && !state.allTeams.length) {
         box.innerHTML = '<div class="typeahead-item muted">Loading teams\u2026</div>';
@@ -893,9 +918,18 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
       if (!document.hidden && (state.todayGames || []).some(isLiveGame)) tickLiveScores();
     });
 
+    const TAB_HASH = { team: 'team', league: 'league', players: 'players', analytics: 'analytics' };
+
     function setTab(tab) {
       state.tab = tab;
       navLinks.forEach(a => a.classList.toggle('active', a.dataset.tab === tab));
+      // Deep-link support: mirror the tab in the URL without adding history
+      // entries or re-triggering hashchange (replaceState, not location.hash=).
+      const h = TAB_HASH[tab];
+      const want = h ? '#' + h : '';
+      if ((location.hash || '') !== want) {
+        try { history.replaceState(null, '', want || location.pathname + location.search); } catch (e) {}
+      }
       loadActiveTab();
       $main.focus({ preventScroll: true }); // move keyboard focus into content on tab switch
     }
@@ -991,6 +1025,14 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
       const st = gameLiveState(g);
       const stLabel = st === 'live' ? 'LIVE' : st === 'final' ? 'FINAL' : 'UPCOMING';
       const scrim = isScrimmageGame(g);
+      // FIX PASS R1-B (3): tint the winning team name (var(--win)); ties keep default
+      const homeWins = hasScore && Number(g.home_score) > Number(g.away_score);
+      const awayWins = hasScore && Number(g.away_score) > Number(g.home_score);
+      // FIX PASS R1-B (2): status chip only on live/final rows — upcoming keeps
+      // the bare vs marker so team names keep their width
+      const chip = (st === 'live' || st === 'final')
+        ? `<span class="status-chip status-${st}">${stLabel}</span>`
+        : '';
       let scoreInner;
       if (hasScore) {
         scoreInner = `<span class="t-score">${g.home_score}\u2013${g.away_score}</span>`;
@@ -1000,15 +1042,15 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
         scoreInner = scrim ? '<span class="t-score t-score-empty">scrim</span>' : '<span class="t-score t-score-empty">vs</span>';
       }
       const homeCell = scrim
-        ? `<span class="t-home scrim">${esc(g.home)}</span>`
-        : `<span class="t-home link" onclick="selectTeam('${g.home_id || ''}')">${esc(g.home)}</span>`;
+        ? `<span class="t-home scrim${homeWins ? ' t-win' : ''}">${esc(g.home)}</span>`
+        : `<span class="t-home link${homeWins ? ' t-win' : ''}" onclick="selectTeam('${g.home_id || ''}')">${esc(g.home)}</span>`;
       const awayCell = scrim
-        ? `<span class="t-away scrim">${esc(g.away)}</span>`
-        : `<span class="t-away link" onclick="selectTeam('${g.away_id || ''}')">${esc(g.away)}</span>`;
+        ? `<span class="t-away scrim${awayWins ? ' t-win' : ''}">${esc(g.away)}</span>`
+        : `<span class="t-away link${awayWins ? ' t-win' : ''}" onclick="selectTeam('${g.away_id || ''}')">${esc(g.away)}</span>`;
       return `<div class="today-row" data-status="${st}"${scrim ? ' data-scrim="1"' : ''}>
         <span class="t-time">${fmtTime(g.time)}</span>
         ${homeCell}
-        <span class="t-board">${scoreInner}<span class="status-chip status-${st}">${stLabel}</span></span>
+        <span class="t-board">${scoreInner}${chip}</span>
         ${awayCell}
         <span class="t-rink">${esc(rink)}</span>
       </div>`;
@@ -1133,6 +1175,8 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
       })();
 
       // Team name with union-blue glow behind it — whole name opens the team tab
+      // FIX PASS R1-B (5): hero-top is normal flex flow; no absolute positioning,
+      // so long names wrap instead of clipping off-card (the x=-63 bug)
       let inner = `<div class="hero-top"><span class="hero-name-wrap hero-glow"><span class="hero-team link" onclick="setTab('team')" title="Open team page">${esc(over.team_name)}</span></span>${raceBadge}</div>`;
 
       // KPI tiles: Record / Points / Streak / Position / Goal Diff
@@ -1159,10 +1203,15 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
       if (over.recent_result) {
         const r = over.recent_result;
         const isHome = r.home_id === teamId;
-        const us = isHome ? r.home_final : r.away_final;
-        const them = isHome ? r.away_final : r.home_final;
-        const res = us > them ? 'w' : (us < them ? 'l' : 't');
-        inner += `<div class="hero-line"><span class="hero-label">Last</span><span class="form-chip ${res}" aria-label="${chipLabel(res)}">${res.toUpperCase()}</span> <b>${us}\u2013${them}</b> ${isHome ? 'vs' : '@'} ${esc(isHome ? r.away : r.home)}</div>`;
+        // FIX PASS R1-B (4): suppress the whole 'Last' line when the opponent
+        // name is missing — prevents the 'T 0-0 @' dangle
+        const hasOpp = !!(isHome ? r.away : r.home);
+        if (hasOpp) {
+          const us = isHome ? r.home_final : r.away_final;
+          const them = isHome ? r.away_final : r.home_final;
+          const res = us > them ? 'w' : (us < them ? 'l' : 't');
+          inner += `<div class="hero-line"><span class="hero-label">Last</span><span class="form-chip ${res}" aria-label="${chipLabel(res)}">${res.toUpperCase()}</span> <b>${us}\u2013${them}</b> ${isHome ? 'vs' : '@'} ${esc(isHome ? r.away : r.home)}</div>`;
+        }
       }
       if (over.next_game) {
         const ng = over.next_game;
@@ -1188,7 +1237,13 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
       html += '<div id="leagueContent"></div></div>';
       setMainHtml(html);
 
-      if (state.leagueId) await loadLeagueContent(state.leagueId, refresh);
+      if (state.leagueId) {
+        await loadLeagueContent(state.leagueId, refresh);
+      } else if (state.leagues.length) {
+        // First run: never render a silent-empty League tab — auto-select the
+        // first league (chooseLeague persists the pick and loads content).
+        await chooseLeague(state.leagues[0].id);
+      }
     }
 
     function playoffsHtml(playoffs) {
@@ -1718,12 +1773,33 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
 
     async function loadTeamContent(teamId, refresh=false) {
       const $content = $('#teamContent');
+      if (!$content) return;
       $content.innerHTML = skeletonHtml(3);
-      const data = await api(`/api/team/${teamId}`, refresh);
-      if (data.error) { $content.innerHTML = `<div class="error">${data.error}</div>`; return; }
+      // Watchdog: 8s nudge ("still loading") and 20s hard error so the
+      // skeleton can never be the final state of this tab.
+      const wd8 = setTimeout(() => {
+        const c = document.getElementById('teamContent');
+        if (c && c.querySelector('.skeleton')) c.innerHTML = '<div class="empty">Still loading your team\u2026</div>';
+      }, 8000);
+      const wd20 = setTimeout(() => {
+        const c = document.getElementById('teamContent');
+        if (c && (c.querySelector('.skeleton') || (c.firstElementChild && c.firstElementChild.classList.contains('empty')))) {
+          c.innerHTML = teamErrorHtml(teamId, 'Timed out after 20s');
+        }
+      }, 20000);
+      let data = null;
+      let hardFail = null;
+      try {
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 25000);
+        try {
+          const res = await fetch(`/api/team/${teamId}` + (refresh ? '?_=' + Date.now() : ''), { signal: ctrl.signal, cache: 'no-store' });
+          data = await res.json();
+        } finally { clearTimeout(timer); }
+        if (data.error) { $content.innerHTML = `<div class="error">${data.error}</div>`; return; }
 
-      const over = data.overview;
-      const standings = data.standings || [];
+        const over = data.overview;
+        const standings = data.standings || [];
       const rankIdx = standings.findIndex(s => s.team_id === teamId);
       const rank = rankIdx >= 0 ? rankIdx + 1 : 0;
       const rankSuffix = rank === 1 ? 'st' : rank === 2 ? 'nd' : rank === 3 ? 'rd' : 'th';
@@ -1774,8 +1850,11 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
         html += '</div>';
       }
 
-      html += '<div class="card session-card" style="padding:12px 14px;margin:0 0 12px"><h3 style="margin-bottom:8px">Session records</h3>';
-      if (form.played) {
+      // "Session records" only renders when there is something to show —
+      // a bare heading over an empty card reads as a bug (jury round 1).
+      if (form.played || sessionLabel) {
+        html += '<div class="card session-card" style="padding:12px 14px;margin:0 0 12px"><h3 style="margin-bottom:8px">Session records</h3>';
+        if (form.played) {
         html += `<div class="picker-hint" style="margin:-4px 0 8px">${esc(sessionLabel || 'Current session')} \u2014 W-L-OTL from ChillerStats standings</div>`;
         const s = form.streak || '';
         const streakClass = s.startsWith('W') ? 'win' : (s.startsWith('L') ? 'loss' : (s.startsWith('O') ? 'otl' : 'tie'));
@@ -1797,10 +1876,11 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
             `<span class="tl-game ${t.result.toLowerCase()}" title="${esc(t.date)} ${t.location === 'H' ? 'vs' : '@'} ${esc(t.opponent)} (${t.score})">${t.result}</span>`
           ).join('') +
           '</div>';
-      } else if (sessionLabel) {
-        html += `<div class="picker-hint">${esc(sessionLabel)} \u2014 no games played yet, so no record to show.</div>`;
+        } else if (sessionLabel) {
+          html += `<div class="picker-hint">${esc(sessionLabel)} \u2014 no games played yet, so no record to show.</div>`;
+        }
+        html += '</div>';
       }
-      html += '</div>';
 
       if (over.next_game) {
         const ng = over.next_game;
@@ -1910,6 +1990,21 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
       a11yFix($content);
       animateNumbers($content);
       fillTeamHistory(teamId);
+      } catch (err) {
+        hardFail = (err && err.name === 'AbortError') ? 'Team request timed out'
+          : (err && err.message ? err.message : 'Failed to render team');
+      } finally {
+        clearTimeout(wd8); clearTimeout(wd20);
+        if (hardFail) {
+          const c = document.getElementById('teamContent');
+          if (c) c.innerHTML = teamErrorHtml(teamId, hardFail);
+        }
+      }
+    }
+
+    function teamErrorHtml(teamId, msg) {
+      return `<div class="card"><div class="empty">Couldn\u2019t load your team \u2014 ${esc(msg)}.</div>`
+        + `<button class="small" style="margin-top:10px" onclick="loadTeamContent('${teamId}', true)">Retry</button></div>`;
     }
 
     function awardsHtml(awards) {
@@ -2130,39 +2225,60 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
       let html = `<div class="card"><h2>Analytics · ${data.league_name}</h2>`;
       html += changeLeagueHtml();
 
-      // Sorted once: points desc, goal diff tiebreak
-      const standings = (data.standings || []).slice().sort((a, b) => (b.pts - a.pts) || ((b.gf - b.ga) - (a.gf - a.ga)));
+      // Sorted once: points desc, goal diff tiebreak. "Bye Week" rows are
+      // schedule placeholders from ChillerStats, not teams — keep them out
+      // of every standings-derived visual.
+      const isByeWeek = (s) => /^bye\s*week$/i.test(String((s && s.team) || '').trim());
+      const standings = (data.standings || []).filter(s => !isByeWeek(s))
+        .slice().sort((a, b) => (b.pts - a.pts) || (((b.gf || 0) - (b.ga || 0)) - ((a.gf || 0) - (a.ga || 0))));
 
       // SEASON HEAT — top 8 teams by points, pure-CSS bar race (no chart libs)
       if (standings.length) {
         const top8 = standings.slice(0, 8);
-        const maxPts = Math.max(...top8.map(s => s.pts), 1);
+        const maxPts = Math.max(...top8.map(s => s.pts || 0), 1);
         html += '<h3>SEASON HEAT</h3><div class="heat-chart">';
+        // Three separate cells: name (flex:1) | bar | mono points. The old
+        // markup nested the number INSIDE the bar, fusing "Nomads" + "0".
         html += top8.map((s, i) => {
-          const pct = Math.max(2, Math.round((s.pts / maxPts) * 1000) / 10);
-          return `<div class="heat-row" title="${esc(s.team)} \u2014 ${s.pts} pts in ${s.gp} GP" onclick="selectTeam('${s.team_id}')">` +
+          const pct = Math.max(2, Math.round(((s.pts || 0) / maxPts) * 1000) / 10);
+          return `<div class="heat-row" title="${esc(s.team)} \u2014 ${s.pts || 0} pts in ${s.gp || 0} GP" onclick="selectTeam('${s.team_id}')">` +
             `<span class="heat-name">${esc(s.team)}</span>` +
-            `<span class="heat-track"><span class="heat-bar${i === 0 ? ' heat-bar--lead' : ''}" data-w="${pct}" style="width:0%">` +
-            `<span class="heat-val">${s.pts}</span></span></span></div>`;
+            `<div class="heat-track" aria-hidden="true"><div class="heat-bar${i === 0 ? ' heat-bar--lead' : ''}" data-w="${pct}" style="width:0%"></div></div>` +
+            `<span class="heat-val">${s.pts || 0}</span></div>`;
         }).join('');
         html += '</div>';
 
-        // GOAL DIFF — dots scattered around the .500 line (left = under, red; right = over, blue)
-        const gdMax = Math.max(...standings.map(s => Math.abs(s.gf - s.ga)), 1);
+        // GOAL DIFF — each team is a dot (>=10px, tooltip via title) on an
+        // axis around the .500 line (left = under, red; right = over, blue).
+        // Abbreviations live in their own row BELOW the axis so they never
+        // collide with the dots.
         const abbrev = (name) => {
           const w = String(name || '?').trim().split(/\s+/);
           return (w.length >= 3 ? w[0][0] + w[1][0] + w[2][0] : w.length === 2 ? w[0][0] + w[1][0] : w[0].slice(0, 3)).toUpperCase();
         };
-        html += '<h3>GOAL DIFF</h3><div class="gd-strip"><span class="gd-line" aria-hidden="true"></span><span class="gd-line-label">.500</span>';
-        html += standings.map((s, i) => {
-          const gd = s.gf - s.ga;
-          const x = Math.min(97, Math.max(3, 50 + (gd / gdMax) * 47)).toFixed(1);
-          const tone = gd > 0 ? 'pos' : (gd < 0 ? 'neg' : 'zero');
-          const sign = gd > 0 ? '+' : '';
-          return `<span class="gd-team gd-lane-${i % 2}" style="left:${x}%" title="${esc(s.team)} ${sign}${gd} (${s.gf} GF / ${s.ga} GA)">` +
-            `<span class="gd-dot gd-dot--${tone}"></span><span class="gd-abbr">${abbrev(s.team)}</span></span>`;
-        }).join('');
-        html += `</div><div class="viz-hint">LEFT of line = under .500 (red) \u00b7 RIGHT = over (blue)</div>`;
+        const hasGoals = standings.some(s => (s.gf || 0) !== 0 || (s.ga || 0) !== 0);
+        html += '<h3>GOAL DIFF</h3>';
+        if (!hasGoals) {
+          // Preseason: every GF/GA is 0 — a row of dots stacked on the line
+          // is a lie. Say so plainly instead of rendering an empty axis.
+          html += '<div class="gd-empty">No goal data yet \u2014 season hasn\u2019t started</div>';
+        } else {
+          const gdMax = Math.max(...standings.map(s => Math.abs((s.gf || 0) - (s.ga || 0))), 1);
+          const gdRows = standings.map((s) => {
+            const gd = (s.gf || 0) - (s.ga || 0);
+            const x = Math.min(96, Math.max(4, 50 + (gd / gdMax) * 46)).toFixed(1);
+            return { s, gd, x, tone: gd > 0 ? 'pos' : (gd < 0 ? 'neg' : 'zero') };
+          });
+          html += '<div class="gd-chart"><div class="gd-axis"><span class="gd-line" aria-hidden="true"></span><span class="gd-line-label">.500</span>';
+          html += gdRows.map(r =>
+            `<span class="gd-dot gd-dot--${r.tone}" style="left:${r.x}%" title="${esc(r.s.team)} ${r.gd > 0 ? '+' : ''}${r.gd} (${r.s.gf || 0} GF / ${r.s.ga || 0} GA)"></span>`
+          ).join('');
+          html += '</div><div class="gd-labels" aria-hidden="true">';
+          html += gdRows.map((r, i) =>
+            `<span class="gd-abbr${i % 2 ? ' gd-abbr--alt' : ''}" style="left:${r.x}%">${abbrev(r.s.team)}</span>`
+          ).join('');
+          html += `</div></div><div class="viz-hint">LEFT of line = under .500 (red) \u00b7 RIGHT = over (blue)</div>`;
+        }
       }
 
       // League leaders — kept, restyled with mono position chips
@@ -2200,6 +2316,7 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
 
     // Public helpers for inline event handlers
     window.setTab = setTab;
+    window.loadTeamContent = (teamId, refresh) => loadTeamContent(teamId, !!refresh);
     // Browsing a team (game rows, standings, compare) — does NOT change your saved team
     window.selectTeam = (teamId) => {
       if (!teamId) return;
@@ -2283,7 +2400,7 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
     });
 
     $main.addEventListener('input', e => {
-      if (e.target.id === 'teamSearch') renderTypeahead(e.target);
+      if (e.target.id === 'teamSearch') { taClearStale(e.target); renderTypeahead(e.target); }
       if (e.target.id === 'playerSearch') renderPlayerTypeahead(e.target);
     });
 
@@ -2555,13 +2672,17 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
           loadActiveTab(true);
         }, 30000);
       }
-      // Broadcast-bug data stamp in the nav footer: "tonight HH:MM".
+      // Data stamp: "UPDATED HH:MM" — 24h-safe (no AM/PM, no "tonight").
       const stampEl = document.getElementById('dataStamp');
       if (stampEl) {
-        const hhmm = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        stampEl.textContent = 'tonight ' + hhmm;
+        const hhmm = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+        stampEl.textContent = hhmm;
       }
+      // Hash deep-link restore: read the hash BEFORE setTab (setTab's
+      // replaceState strips it when restoring the default 'today' tab).
+      const bootHash = location.hash.slice(1);
       setTab(state.tab);
+      if (TABS.includes(bootHash) && bootHash !== state.tab) setTab(bootHash);
       // Prefetch teams only. Player lookup uses /api/players/lookup so a
       // boot-time roster fan-out cannot starve a typed name search.
       loadAllTeams();

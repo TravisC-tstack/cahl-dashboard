@@ -178,13 +178,13 @@ header {
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
-/* broadcast identity stripe: the 2px top edge of the page */
+/* broadcast identity stripe: the 2px top edge of the page — strictly union->accent */
 header::before {
   content: "";
   position: absolute;
   top: 0; left: 0; right: 0;
   height: 2px;
-  background: linear-gradient(90deg, var(--union) 0%, var(--accent) 50%, var(--silver) 100%);
+  background: linear-gradient(90deg, var(--union) 0%, var(--accent) 100%);
   pointer-events: none;
 }
 html[data-theme="light"] header {
@@ -228,38 +228,33 @@ header h1 { font-size: 17px; font-weight: 800; margin: 0; letter-spacing: 0.2px;
 }
 .brand-logo { height: 30px; width: auto; margin-right: 8px; filter: drop-shadow(0 2px 6px rgba(0,0,0,0.5)); }
 .brand-mark { width: 20px; height: 20px; vertical-align: -3px; margin-right: 6px; color: var(--accent); }
-/* ---------- LIVE SWITCH (header toggle) ---------- */
-.switch {
-  display: inline-flex; align-items: center; gap: 7px;
-  font-size: 12px; font-weight: 600;
-  color: var(--muted);
-  cursor: pointer;
-  height: 32px;
-  padding: 0 4px;
-  user-select: none;
+/* ---------- LIVE STATUS PILL (header, status — not a switch) ---------- */
+/* Status vocabulary only: body.has-live -> pulsing LIVE pill; idle -> dimmed badge.
+   The hidden auto-refresh checkbox stays functional: clicking the pill toggles it. */
+.live-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 32px; padding: 0 10px; border-radius: 999px;
+  background: var(--panel-2); border: 1px solid var(--border-soft);
+  color: var(--faint); font-family: var(--mono); font-size: 9.5px;
+  font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; line-height: 1.4;
+  cursor: pointer; user-select: none; flex: 0 0 auto;
+  transition: border-color var(--t-fast), background var(--t-fast), color var(--t-fast);
 }
-.switch input { display: none; }
-.switch .toggle {
-  width: 36px; height: 20px;
-  background: var(--panel-3);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  position: relative;
-  transition: background var(--t-fast), border-color var(--t-fast);
-  flex: 0 0 auto;
+.live-pill:hover { border-color: var(--border-strong); color: var(--muted); }
+.live-pill:focus-within { outline: 2px solid var(--union); outline-offset: 2px; }
+.live-pill .live-pill-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--faint); flex: 0 0 auto; }
+/* live: accent status */
+body.has-live .live-pill {
+  background: rgba(232, 37, 60, 0.14); border-color: rgba(232, 37, 60, 0.4);
+  color: var(--accent);
 }
-.switch .toggle::after {
-  content: "";
-  position: absolute; top: 2px; left: 2px;
-  width: 14px; height: 14px; border-radius: 50%;
-  background: var(--muted);
-  transition: left var(--t-fast), background var(--t-fast);
+body.has-live .live-pill .live-pill-dot {
+  background: var(--accent);
+  animation: live-dot-pulse 1.4s ease-in-out infinite;
 }
-.switch input:checked + .toggle { background: var(--accent-dim); border-color: rgba(232, 37, 60, 0.5); }
-.switch input:checked + .toggle::after { left: 18px; background: var(--accent); }
-.switch:has(input:checked) { color: var(--accent); }
-.live-dot { display: none; }
-body.has-live .live-dot { display: inline-block; }
+html[data-theme="light"] body.has-live .live-pill {
+  background: rgba(206, 17, 38, 0.08); border-color: rgba(206, 17, 38, 0.32); color: var(--loss);
+}
 
 .ver-badge {
   font-family: var(--mono);
@@ -269,6 +264,13 @@ body.has-live .live-dot { display: inline-block; }
   padding: 2px 7px; border-radius: 5px;
   letter-spacing: 0.06em;
 }
+/* tap targets: theme toggle + refresh keep a 44x44 hit area without visual bulk */
+#themeToggle, #refreshBtn {
+  min-width: 44px; min-height: 44px;
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 0 12px;
+}
+#themeToggle { padding: 0; width: 44px; }
 header .controls { display: flex; align-items: center; gap: 8px; }
 
 /* ---------- NAV: segmented dock ---------- */
@@ -543,6 +545,19 @@ button:focus-visible { outline: 2px solid var(--union); outline-offset: 2px; }
 }
 .btn-link:hover { border-color: var(--accent); color: var(--accent); }
 
+/* footer/data stamp: sits at the end of the main scroll area, never inside the
+   bottom nav or its safe-area inset — no overlap at 390px */
+.data-note {
+  font-family: var(--mono);
+  font-size: 9.5px; font-weight: 500;
+  color: var(--faint);
+  letter-spacing: 0.14em;
+  text-align: center;
+  margin: 4px 0 10px;
+  padding-bottom: calc(6px + env(safe-area-inset-bottom, 0px));
+}
+.data-note #dataStamp { font-variant-numeric: tabular-nums; }
+
 /* segmented pills */
 .pill-row, .picker-days, .picker-leagues { display: flex; flex-wrap: wrap; gap: 7px; }
 .pill-row { margin-bottom: 12px; }
@@ -747,13 +762,14 @@ html[data-theme="light"] select:focus, html[data-theme="light"] input:focus {
   animation: pal-pop 0.15s var(--ease);
 }
 @keyframes pal-pop { from { transform: translateY(8px); opacity: 0; } to { transform: none; opacity: 1; } }
-.pal-input-row { display: flex; align-items: center; gap: 10px; padding: 0 14px; border-bottom: 1px solid var(--border); }
+.pal-input-row { display: flex; align-items: center; gap: 10px; padding: 0 14px; border-bottom: 1px solid var(--border); background: var(--panel-3); }
 .pal-input-row svg { flex: 0 0 auto; stroke: var(--muted); }
 .pal-input-row input {
   flex: 1; height: 52px; padding: 0; border: none; border-radius: 0;
   background: transparent; margin: 0; font-size: 15px;
 }
-.pal-input-row input:focus { box-shadow: none; border: none; }
+.pal-input-row input:focus { box-shadow: none; border: none; outline: none; }
+html[data-theme="light"] .pal-input-row input:focus { border: none; box-shadow: none; outline: none; }
 .pal-esc { font-family: var(--mono); font-size: 10px; color: var(--faint); border: 1px solid var(--border); border-radius: 4px; padding: 2px 5px; }
 .pal-list { max-height: 46vh; overflow-y: auto; padding: 6px; }
 .pal-grp { font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.16em; color: var(--faint); padding: 10px 10px 4px; text-transform: uppercase; font-weight: 600; }
@@ -1033,8 +1049,10 @@ body.has-live .live-dot { display: inline-block; }
   border: 1px solid rgba(255, 93, 110, 0.25);
   border-radius: var(--radius-sm);
 }
-.link { color: var(--union); text-decoration: none; cursor: pointer; }
-.link:hover { color: var(--accent); }
+/* .link: neutral secondary color + underline on hover so plain links stop
+   competing with team-name blue */
+.link { color: var(--text-2); text-decoration: none; cursor: pointer; }
+.link:hover { color: var(--text); text-decoration: underline; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
 .skip-link {
   position: fixed; top: -48px; left: 12px; z-index: 100;
@@ -1130,6 +1148,8 @@ body.has-live .live-dot { display: inline-block; }
 
 /* pointer awareness */
 @media (hover: none), (pointer: coarse) {
+  /* ⌘K chip is dead on touch — hide it; the palette still opens via the search button */
+  .kpal-btn kbd { display: none; }
   .pill { padding: 10px 16px; }
   .sb-card:hover { transform: none; }
   .cal-cell.has-games { min-height: 48px; }
@@ -1349,7 +1369,6 @@ html[data-theme="light"] .pos-chip { background: rgba(0, 87, 184, 0.08); border-
 html[data-theme="light"] .cut-line { border-top-color: rgba(206, 17, 38, 0.40); }
 html[data-theme="light"] .heat-row:hover { background: var(--panel-3); }
 html[data-theme="light"] .team-watermark { color: var(--union-deep); opacity: 0.06; }
-html[data-theme="light"] .live-pill { background: rgba(206, 17, 38, 0.08); border-color: rgba(206, 17, 38, 0.32); color: var(--loss); }
 html[data-theme="light"] .ppg-median { border-left-color: rgba(13, 27, 46, 0.35); }
 html[data-theme="light"] .lead-pts { color: #a30e1e; }
 html[data-theme="light"] .elim { background: rgba(206, 17, 38, 0.07); border-color: rgba(206, 17, 38, 0.28); }
@@ -1518,3 +1537,422 @@ td.lead-pts {
 .pos-chip.pos-d { color: var(--union); border: 1px solid rgba(42, 127, 212, 0.45); background: rgba(42, 127, 212, 0.12); }
 .pos-chip.pos-f { color: var(--text-2); border: 1px solid var(--border-strong); background: transparent; }
 .pos-chip.pos-g { color: var(--accent); border: 1px solid rgba(232, 37, 60, 0.45); background: rgba(232, 37, 60, 0.12); }
+
+/* ============================================================
+   FIX PASS R1-B — Today tab + hero cleanup (jury round 1)
+   ============================================================ */
+
+/* (1) .today-cols-head: real grid matching the row layout.
+   Rows are grid areas time/home/board/away with rink in the board
+   cell, so the header mirrors that. Below 600px the header hides —
+   a hidden header beats a smashed one. */
+.today-list-cols .today-cols-head {
+  display: grid;
+  grid-template-columns: 56px 1fr auto;
+  grid-template-areas: "time home board" "time away board";
+  column-gap: 10px;
+  padding: 6px 6px 8px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.today-cols-head span:nth-child(1) { grid-area: time; }
+.today-cols-head span:nth-child(2) { grid-area: home; }
+.today-cols-head span:nth-child(3) { grid-area: board; text-align: left; }
+.today-cols-head span:nth-child(4) { grid-area: away; }
+.today-cols-head span:nth-child(5) { display: none; }
+@media (max-width: 600px) {
+  .today-cols-head { display: none; }
+}
+
+/* (2) UPCOMING chips no longer render per-row (JS side); upcoming
+   rows get the bare vs marker so team names keep their width.
+   Chip styling stays for live/final rows. */
+
+/* (3) winning team name tint on final rows (ties stay default) */
+.today-row .t-home.t-win,
+.today-row .t-away.t-win { color: var(--win); }
+
+/* (5) hero name: normal flow — kills the absolute-positioned
+   .hero-glow panel (x=-63 off-card clip + subtitle collision).
+   The glow stays as the ::before halo on the name itself. */
+.hero-top { position: relative; }
+.hero-top .hero-glow {
+  position: static !important;
+  display: inline-block !important;
+  inset: auto !important;
+  width: auto !important;
+  height: auto !important;
+  background: none !important;
+  pointer-events: auto !important;
+  user-select: auto !important;
+}
+.hero-top .hero-glow .hero-team {
+  display: inline-block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+.hero-top .hero-name-wrap { max-width: 100%; min-width: 0; }
+
+/* ============================================================
+   FIX PASS R1-D — Analytics tab (jury round 1)
+   Root cause of 'Nomads0' fusion + empty GOAL DIFF hairline:
+   the .heat-*/.gd-* classes below had NO css — spans rendered
+   inline. This block defines every class the Analytics markup
+   emits. CBJ palette only.
+   ============================================================ */
+
+/* (4) Season tables: tabular numerals + right-aligned numeric cols */
+table {
+  font-variant-numeric: tabular-nums;
+}
+table th.num, table td.num {
+  text-align: right;
+}
+
+/* (1) SEASON HEAT — flex row: name | bar | mono points */
+.heat-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 8px;
+  border-radius: var(--radius-sm);
+  border-bottom: 1px solid var(--border-soft);
+  cursor: pointer;
+  transition: background var(--t-fast);
+}
+.heat-row:hover { background: var(--panel-2); }
+html[data-theme="light"] .heat-row:hover { background: var(--panel-3); }
+.heat-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text);
+}
+.heat-track {
+  flex: 0 0 40%;
+  height: 12px;
+  background: var(--inset);
+  border-radius: 999px;
+  overflow: hidden;
+  border: 1px solid var(--border-soft);
+}
+.heat-bar {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--union-deep), var(--union));
+  border-radius: 999px;
+  transition: width 0.7s var(--ease);
+}
+.heat-bar--lead { background: linear-gradient(90deg, var(--union), var(--accent)); }
+.heat-val {
+  flex: 0 0 34px;
+  text-align: right;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+/* (2) GOAL DIFF — dot axis, labels in their own row BELOW the axis */
+.gd-empty {
+  padding: 18px 14px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--inset);
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+}
+.gd-chart { padding: 6px 4px 0; }
+.gd-axis {
+  position: relative;
+  height: 22px;
+  border-radius: 3px;
+  background: var(--inset);
+  border: 1px solid var(--border-soft);
+}
+.gd-line {
+  position: absolute;
+  left: 50%;
+  top: -4px;
+  bottom: -4px;
+  width: 0;
+  border-left: 2px dashed var(--silver);
+  opacity: 0.75;
+}
+.gd-line-label {
+  position: absolute;
+  left: calc(50% + 6px);
+  top: 50%;
+  transform: translateY(-50%);
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  color: var(--muted);
+  pointer-events: none;
+}
+.gd-dot {
+  position: absolute;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  cursor: default;
+  z-index: 2;
+  border: 1.5px solid rgba(255, 255, 255, 0.55);
+}
+.gd-dot--pos { background: var(--union); }
+.gd-dot--neg { background: var(--accent); }
+.gd-dot--zero { background: var(--silver); }
+html[data-theme="light"] .gd-dot { border-color: rgba(255, 255, 255, 0.85); }
+.gd-labels {
+  position: relative;
+  height: 26px;
+  margin-top: 5px;
+}
+.gd-abbr {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.gd-abbr--alt { top: 8px; }
+html[data-theme="light"] .gd-abbr { color: var(--muted); }
+.viz-hint {
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--faint);
+  letter-spacing: 0.04em;
+}
+
+/* ============================================================
+   FIX PASS R1-E — mobile/responsive (jury round 1, 390px)
+   Append-only pass; later rules intentionally override earlier ones.
+   ============================================================ */
+
+/* ---- (5) Contrast: --muted/--faint >= 4.5:1 on every surface, both themes ----
+   Computed worst-case over bg/bg-raise/panel/panel-2/panel-3/inset:
+   dark muted #8494ab min 5.10 | dark faint #7a8ca5 min 4.59 (was #5a6a82 3.35)
+   light muted #556780 min 4.91 (was #5d6f88 4.36) | light faint #5b6c85 min 4.55 (was #8a99ad 2.49) */
+:root {
+  --muted: #8494ab;
+  --faint: #7a8ca5;
+}
+html[data-theme="light"] {
+  --muted: #556780;
+  --faint: #5b6c85;
+}
+/* elim rows: opacity .55 dragged every cell under 4.5:1 — lift so dimmed text still passes */
+tr.elim td { opacity: 0.72; }
+
+/* ---- (3) Hero name: no negative-x at any width (CSS guard; markup fix is agent B's) ---- */
+.hero-card { position: relative; overflow: hidden; }  /* clips watermark/glow bleeds; makes card the containing block */
+.hero-top { min-width: 0; }
+.hero-card .hero-team {
+  min-width: 0; max-width: 100%;
+  white-space: normal; overflow: hidden;
+  overflow-wrap: anywhere; word-break: break-word;
+}
+
+/* ---- (6) Bottom: main scroll area always clears the nav + safe-area ---- */
+main { padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px)); }  /* ≥ nav 68px */
+@media (min-width: 768px) {
+  main { padding-bottom: calc(44px + env(safe-area-inset-bottom, 0px)); }
+}
+
+/* ---- (1) Tables < 700px: swipe affordance + columns that never crush ---- */
+@media (max-width: 699px) {
+  th, td { min-width: 44px; }
+  th.num, td.num { min-width: 42px; }
+  th:first-child, td:first-child { min-width: 132px; }               /* team/date columns stay readable */
+  table.board th:first-child, table.board td:first-child { min-width: 40px; }   /* rank col on players board */
+  table.board th:nth-child(2), table.board td:nth-child(2) { min-width: 118px; } /* player name col */
+
+  /* Right-edge fade, self-hiding: layer 1 (scroll-attached) is the cover that
+     slides with content; layer 2 (local) paints UNDER it and fades the visible
+     right edge — at full scroll the cover slides over the fade and it self-hides.
+     :has(table) (not > table) — standings tables may sit inside wrappers. */
+  .card:has(table) > table,
+  .card table {
+    background-image:
+      linear-gradient(to left, var(--panel), var(--panel)),
+      linear-gradient(to right, rgba(0, 0, 0, 0), var(--panel) 82%);
+    background-size: 46px 100%, 46px 100%;
+    background-position: right top, right top;
+    background-repeat: no-repeat, no-repeat;
+    background-attachment: local, scroll;
+  }
+  .card:has(table) { position: relative; }
+  .card:has(table)::after {
+    content: "swipe ›";
+    position: absolute; right: 8px; bottom: 8px; z-index: 6;
+    font-family: var(--mono); font-size: 9px; font-weight: 700;
+    letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--muted); background: var(--panel-3);
+    border: 1px solid var(--border); border-radius: 999px;
+    padding: 3px 8px;
+    pointer-events: none;
+  }
+}
+
+/* ---- (2) Header cluster < 700px: wrap + max-width guards, nothing off-canvas ---- */
+@media (max-width: 699px) {
+  header { flex-wrap: wrap; gap: 8px; padding: 10px 12px; }
+  header h1 { flex: 0 0 auto; min-width: 0; max-width: 100%; }
+  .brand-block { flex: 0 1 auto; min-width: 0; max-width: 100%; }
+  header .controls {
+    flex: 1 1 auto; min-width: 0; max-width: 100%;
+    flex-wrap: wrap; justify-content: flex-end; gap: 6px;
+  }
+  .live-pill { flex: 0 1 auto; min-width: 0; max-width: 100%; overflow: hidden; }
+  .live-pill .live-pill-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}
+
+/* ---- (4) 390-class header compression: tighter chrome, icon-only Search ---- */
+@media (max-width: 430px) {
+  header { padding: 6px 10px; gap: 6px; }
+  header h1 { display: flex; line-height: 1; }  /* kill inline-flex baseline descender space */
+  .brand-logo { height: 24px; margin-right: 6px; }
+  .brand-text { font-size: 17px; }
+  .brand-sub { font-size: 7.5px; letter-spacing: 0.26em; }
+  header .controls { gap: 5px; }
+  #kpalBtn { height: 26px; padding: 0 8px; gap: 5px; }
+  #kpalBtn kbd { display: none; }  /* Search goes icon-only; text already hidden <600px */
+  #themeToggle, #refreshBtn { min-height: 0; min-width: 0; padding: 4px 8px; font-size: 11px; }
+  #themeToggle { padding: 4px 7px; }
+  .switch { gap: 4px; font-size: 11px; height: 24px; }
+  .live-pill { height: 26px; padding: 0 8px; letter-spacing: 0.08em; }
+}
+
+/* ---- (7) < 480px: game rows stack into single-column cards ----
+   time+status on the top line, home/away as full-width lines, rink inline. */
+@media (max-width: 479px) {
+  .today-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "time board"
+      "home home"
+      "away away"
+      "rink rink";
+    row-gap: 5px; column-gap: 10px;
+    padding: 12px 14px;
+    background: var(--panel-2);
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius-md);
+    margin-bottom: 8px;
+  }
+  .today-row:last-child { border-bottom: 1px solid var(--border-soft); margin-bottom: 0; }
+  .today-row[data-status="live"] { background: var(--accent-dim); }
+  .today-row .t-time { justify-self: start; align-self: center; font-size: 11.5px; }
+  .today-row .t-board { justify-self: end; }
+  .today-row .t-home, .today-row .t-away { font-size: 17px; }
+  .today-row .t-rink { display: inline-block; justify-self: start; max-width: 100%; }
+}
+
+/* ============================================================
+   FIX PASS R1-F — table craft & consistency (jury round 1)
+   1) zebra rows   2) today header labels over BOTH groups
+   3) ppg median tick   4) jersey numerals   5) mono scale
+   ============================================================ */
+
+/* (5) mono scale: the label-size scatter collapses to three tokens.
+   xs = micro chips/groups · sm = table + eyebrow labels · md = meta
+   lines. panel-aware: vars live on :root so both themes share them. */
+:root {
+  --mono-xs: 9.5px;
+  --mono-sm: 10.5px;
+  --mono-md: 11.5px;
+}
+.eyebrow { font-size: var(--mono-sm); }
+th { font-size: var(--mono-sm); }
+.status-chip { font-size: var(--mono-xs); }
+.sb-meta { font-size: var(--mono-sm); }
+.pal-grp { font-size: var(--mono-xs); }
+
+/* (1) zebra striping: even tbody rows get a faint panel-2 wash on the
+   leaderboard (.board), league standings and team rosters. panel-2 is
+   theme-aware so dark and light both tint correctly at 40%; row hover
+   keeps the solid panel-2 (explicit even:hover beats the zebra). */
+table.board tbody tr:nth-child(even),
+#leagueSecStandings tbody tr:nth-child(even),
+tr.roster-player:nth-child(even) {
+  background: color-mix(in srgb, var(--panel-2) 40%, transparent);
+}
+table.board tbody tr:nth-child(even):hover,
+#leagueSecStandings tbody tr:nth-child(even):hover,
+tr.roster-player:nth-child(even):hover {
+  background: var(--panel-2);
+}
+
+/* (2) desktop today header: 11 sub-columns so labels sit over BOTH
+   groups. The 16px separator track + the two 10px gaps around it
+   (36px total) make each head group resolve to exactly a row's content
+   width (head spans both list columns; rows get (W-24)/2 - 12), so the
+   fr tracks match the rows and every label lands dead over its column.
+   Group-A labels are the real spans (auto-placed into tracks 1-5).
+   Group-B labels repeat via abs-pos ::after pseudos on the head
+   (position:relative) with explicit calc() lefts: fr = (100% - 696px)/6
+   for this template, so 3f/4.5f/6f map to /2, 3/4, and full. */
+@media (min-width: 900px) {
+  .today-list-cols .today-cols-head {
+    position: relative;
+    grid-template-columns: 58px minmax(0, 1.5fr) 118px minmax(0, 1.5fr) 108px 16px 58px minmax(0, 1.5fr) 118px minmax(0, 1.5fr) 108px;
+    grid-template-areas: none;
+    grid-template-rows: auto;
+    column-gap: 10px;
+  }
+  .today-list-cols .today-cols-head span { grid-area: auto; }
+  .today-list-cols .today-cols-head span:nth-child(5) { display: block; }
+  .today-list-cols .today-cols-head span::after {
+    position: absolute;
+    top: 6px;
+    display: block;
+    white-space: nowrap;
+    pointer-events: none;
+  }
+  .today-list-cols .today-cols-head span:nth-child(1)::after { content: "Time"; left: calc(366px + (100% - 696px) / 2); }
+  .today-list-cols .today-cols-head span:nth-child(2)::after { content: "Home"; left: calc(434px + (100% - 696px) / 2); }
+  .today-list-cols .today-cols-head span:nth-child(3)::after { content: "Score"; left: calc(444px + 3 * (100% - 696px) / 4); }
+  .today-list-cols .today-cols-head span:nth-child(4)::after { content: "Away"; left: calc(572px + 3 * (100% - 696px) / 4); }
+  .today-list-cols .today-cols-head span:nth-child(5)::after { content: "Rink"; left: calc(582px + (100% - 696px)); }
+}
+
+/* (3) ppg-bar median tick: 1px vertical marker at the 50% line, faint,
+   above the fill but under the value numeral */
+.ppg-bar::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 2px;
+  bottom: 2px;
+  width: 1px;
+  background: var(--faint);
+  opacity: 0.6;
+  z-index: 1;
+  pointer-events: none;
+}
+
+/* (4) jersey numerals: display-face digits for team-page roster
+   columns — safe on <td class="jersey-num"> (stays a table cell) and
+   on <span class="jersey-num"> (inline-block so right-align holds) */
+.jersey-num {
+  font-family: var(--display);
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.2;
+  text-align: right;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+span.jersey-num { display: inline-block; min-width: 30px; }
