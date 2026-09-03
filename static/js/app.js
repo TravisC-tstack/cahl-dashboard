@@ -7,7 +7,7 @@ window.addEventListener('pageshow', e => {
 // Frontend version — shown in the badge. The old window.APP_VERSION
 // dual-check is gone (index.html's stale copy caused a reload on every
 // boot); /api/version self-heal below is the only reload path now.
-const JS_VERSION = 52;
+const JS_VERSION = 53;
 
 // Self-heal: if the server is running a NEWER frontend than this cached JS, reload fresh.
 fetch('/api/version').then(r => r.json()).then(v => {
@@ -18,8 +18,6 @@ fetch('/api/version').then(r => r.json()).then(v => {
 }).catch(() => {});
 
 const $main = document.getElementById('main');
-const $ver = document.getElementById('verBadge');
-if ($ver) $ver.textContent = 'v' + JS_VERSION;
     const $refresh = document.getElementById('refreshBtn');
     const $auto = document.getElementById('autoToggle');
     const navLinks = document.querySelectorAll('.nav-link');
@@ -594,7 +592,7 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
       // Signature strip: tonight's pacemakers — top 3 by PTS across the loaded index.
       if (state.allPlayers.length) {
         const pace = state.allPlayers.slice().sort((a, b) => (b.pts ?? 0) - (a.pts ?? 0)).slice(0, 3);
-        html += '<div class="pacemakers"><div class="pacemakers-label">TONIGHT\u2019S PACEMAKERS</div><div class="pacemakers-row">'
+        html += '<div class="pacemakers"><div class="pacemakers-label">LEAGUE LEADERS</div><div class="pacemakers-row">'
           + pace.map((p, i) => `
             <div class="pacemaker" onclick="selectPlayerToken('${p.token || ''}')">
               <span class="pace-name">${esc(p.name)}</span>
@@ -684,7 +682,7 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
         if (!state.allTeams.length) {
           box.innerHTML = '<div class="typeahead-item muted">Loading teams\u2026</div>';
         } else if (!matches.length) {
-          box.innerHTML = '<div class="typeahead-item muted">No teams match\\u2026</div>';
+          box.innerHTML = '<div class="typeahead-item muted">No teams match\u2026</div>';
         } else {
           box.innerHTML = matches.map(t =>
             `<div class="typeahead-item" data-tid="${t.id}" data-lid="${t.league_id}"><span class="ta-name">${esc(t.name)}</span><span class="ta-league">${esc(t.league_name)}</span></div>`
@@ -1067,7 +1065,8 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
       } else if (st === 'live') {
         scoreInner = '<span class="t-score live-badge">LIVE</span>';
       } else {
-        scoreInner = scrim ? '<span class="t-score t-score-empty">scrim</span>' : '<span class="t-score t-score-empty">vs</span>';
+        // Em-dash placeholder, never a word: an upcoming game has no score yet.
+        scoreInner = '<span class="t-score t-score-empty" aria-label="Not started">\u2013</span>';
       }
       const homeCell = scrim
         ? `<span class="t-home scrim${homeWins ? ' t-win' : ''}">${esc(g.home)}</span>`
@@ -1102,11 +1101,11 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
       } else {
         if (finals.length) {
           html += '<div class="card today-card"><h2>Final</h2>'
-            + '<div class="today-list today-list-cols"><div class="today-cols-head"><span>Time</span><span>Home</span><span>Score</span><span>Away</span><span>Rink</span></div>' + finals.map(todayRowHtml).join('') + '</div></div>';
+            + '<div class="today-list today-list-cols"><div class="today-cols-head"><span>Time</span><span>Home</span><span>Match</span><span>Away</span><span>Rink</span></div>' + finals.map(todayRowHtml).join('') + '</div></div>';
         }
         if (upcoming.length) {
           html += '<div class="card today-card"><h2>Upcoming</h2>'
-            + '<div class="today-list today-list-cols"><div class="today-cols-head"><span>Time</span><span>Home</span><span>Score</span><span>Away</span><span>Rink</span></div>' + upcoming.map(todayRowHtml).join('') + '</div></div>';
+            + '<div class="today-list today-list-cols"><div class="today-cols-head"><span>Time</span><span>Home</span><span>Match</span><span>Away</span><span>Rink</span></div>' + upcoming.map(todayRowHtml).join('') + '</div></div>';
         }
       }
       return html;
@@ -1243,12 +1242,15 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
       }
       if (over.next_game) {
         const ng = over.next_game;
+        // Guard both dangles: no opponent name -> no 'vs/@'; no facility -> no sep.
+        const opp = (ng.opponent || '').trim();
+        const fac = (ng.facility || '').trim();
         inner += `<div class="hero-next">`
           + `<span class="hero-next-tag"><span class="hero-next-dot"></span>Next</span><span class="hero-next-sep">\u00b7</span>`
           + `<span>${esc(ng.date || 'TBD')}</span><span class="hero-next-sep">\u00b7</span>`
-          + `<span>${esc(fmtTime(ng.time))}</span><span class="hero-next-sep">\u00b7</span>`
-          + `<span>${esc(ng.facility || 'TBD')}</span><span class="hero-next-sep">\u00b7</span>`
-          + `<span class="hero-next-vs">${ng.home_away === 'Home' ? 'vs' : '@'} <span class="hero-next-opp">${esc(ng.opponent)}</span></span>`
+          + `<span>${esc(fmtTime(ng.time))}</span>`
+          + (fac ? `<span class="hero-next-sep">\u00b7</span><span>${esc(fac)}</span>` : '')
+          + (opp ? `<span class="hero-next-sep">\u00b7</span><span class="hero-next-vs">${ng.home_away === 'Home' ? 'vs' : '@'} <span class="hero-next-opp">${esc(opp)}</span></span>` : '')
           + `</div>`;
       }
       el.innerHTML = inner;
@@ -2870,7 +2872,7 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
       }
       let html = '', last = '';
       kpal.items.forEach((it, i) => {
-        const grp = it.kind === 'player' ? 'Players' : it.kind === 'team' ? 'Teams' : it.kind === 'page' ? 'Pages' : 'Tonight';
+        const grp = it.kind === 'player' ? 'Players' : it.kind === 'team' ? 'Teams' : 'Pages';
         if (grp !== last) { html += `<div class="pal-grp">${grp}</div>`; last = grp; }
         html += `<div class="pal-item" role="option" data-i="${i}" aria-selected="${i === 0}">
           <span class="pal-ic${it.kind === 'player' ? ' red' : ''}">${kpalEsc(it.icon)}</span>
