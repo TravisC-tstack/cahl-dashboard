@@ -247,6 +247,18 @@ def parse_homepage():
                     "name": txt,
                 })
 
+    # Drop scrimmage/practice slots entirely — chillerstats auto-creates
+    # placeholder "teams" (literally "Team Blue" vs "Team Red") for unrostered
+    # pickup ice. They have no rosters, no standings, no stats; the owner wants
+    # them off the board.
+    def _is_scrim_slot(home, away):
+        pat = re.compile(
+            r"^team\s+(blue|red|white|black|grey|gray|gold|green|navy|silver|teal|orange|yellow|purple|home|away)$",
+            re.IGNORECASE)
+        return bool(pat.match((home or "").strip()) and pat.match((away or "").strip()))
+
+    today = [g for g in today if not _is_scrim_slot(g.get("home"), g.get("away"))]
+
     return {"today": today, "leagues": leagues}, None
 
 

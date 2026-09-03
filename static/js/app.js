@@ -5,7 +5,7 @@ window.addEventListener('pageshow', e => {
 });
 
 // Version guard: if the cached HTML and JS disagree, reload once to resync.
-const JS_VERSION = 47;
+const JS_VERSION = 49;
 if (window.APP_VERSION && window.APP_VERSION !== JS_VERSION && !sessionStorage.getItem('vresync')) {
   sessionStorage.setItem('vresync', '1');
   location.reload();
@@ -593,7 +593,14 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
         html += `<th${c.num ? ' class="num"' : ''} data-sort="${c.key}" tabindex="0" role="button" title="Sort by ${c.label}">${c.label}${arrow}</th>`;
       });
       html += '</tr></thead><tbody>';
-      html += shown.map((p, i) => `
+      // Signature viz: P/GP rendered as a Savant-style percentile bar.
+      // Scale anchor: 2.0 P/GP is an elite beer-league pace (full width).
+      const shownPpg = shown.map(p => p.gp ? p.pts / p.gp : 0);
+      const ppgMax = Math.max(2.0, ...shownPpg);
+      html += shown.map((p, i) => {
+        const ppg = p.gp ? p.pts / p.gp : 0;
+        const pct = Math.max(4, Math.min(100, ppg / ppgMax * 100));
+        return `
         <tr class="link" onclick="selectPlayerToken('${p.token || ''}')">
           <td class="num">${i + 1}</td>
           <td><span class="link">${esc(p.name)}</span></td>
@@ -601,9 +608,10 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
           <td>${esc(p.position || '-')}</td>
           <td class="num">${p.gp}</td><td class="num">${p.g}</td><td class="num">${p.a}</td>
           <td class="num">${p.pts}</td>
-          <td class="num">${p.gp ? (p.pts / p.gp).toFixed(2) : '-'}</td>
+          <td class="num"><div class="ppg-bar"><div class="ppg-fill" style="width:${pct.toFixed(1)}%"></div><span class="ppg-val">${p.gp ? ppg.toFixed(2) : '-'}</span></div></td>
           <td class="num">${p.pim}</td>
-        </tr>`).join('');
+        </tr>`;
+      }).join('');
       html += '</tbody></table>';
       if (!showAll && rows.length > shown.length) {
         html += `<button class="ghost small" data-showall style="margin-top:10px">Show all ${rows.length} players</button>`;
@@ -950,7 +958,8 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
     }
 
     function todayRowHtml(g) {
-      const rink = (g.facility || '').replace(/^Chiller\s+/i, '');
+      let rink = (g.facility || '').replace(/^(?:OhioHealth\s+|NTPRD\s+)?Chiller\s+/i, '');
+      rink = rink.replace(/^OhioHealth\s+Ice\s+Haus$/i, 'Ice Haus').replace(/^NTPRD\s+Chiller$/i, 'NTPRD');
       const hasScore = hasPostedScore(g);
       const st = gameLiveState(g);
       const stLabel = st === 'live' ? 'LIVE' : st === 'final' ? 'FINAL' : 'UPCOMING';
@@ -979,7 +988,7 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
     }
 
     function todayPageHtml(data) {
-      let html = '<p class="board-howto">Today is the scoreboard. Live games sit up top. Tap a team for roster &amp; schedule. League / Team / Players / Analytics are in the bar.</p>';
+      let html = '<p class="board-howto">Every game on tonight\u2019s Chiller slate \u2014 live scores land the moment scoring starts.</p>';
       if (state.myTeam) {
         html += '<div class="card hero-card" id="myTeamHero"><div class="empty">Loading your team\u2026</div></div>';
       } else {
@@ -1008,6 +1017,10 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
 
     // Fill scores from the separate (slower) scores endpoint and re-render.
     async function loadTodayScores(force=false) {
+      const prev = {};
+      state.todayGames.forEach(g => {
+        if (g.home_id) prev[g.home_id + '|' + g.away_id] = [g.home_score, g.away_score];
+      });
       const data = await api('/api/today/scores', force);
       if (data.error || !data.games) return;
       const byIds = {};
@@ -1018,6 +1031,10 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
         if (s.status) g.status = s.status;
         if (s.is_final) g.is_final = true;
         if (s.played) {
+          const before = prev[g.home_id + '|' + g.away_id] || [];
+          if (before[0] !== s.home_score || before[1] !== s.away_score) {
+            g._flash = true; // scoreboard re-render flashes the changed digits
+          }
           g.home_score = s.home_score;
           g.away_score = s.away_score;
           g.home_periods = s.home_periods;
@@ -1028,8 +1045,27 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
       syncLivePolling(state.todayGames);
       if (state.tab === 'today') {
         setMainHtml(todayPageHtml());
+        flashChangedScores();
         if (state.myTeam) loadMyTeamHero(state.myTeam, false);
       }
+    }
+
+    // Pulse the score numerals that just changed (broadcast goal flash).
+    function flashChangedScores() {
+      if (!state.todayGames.some(g => g._flash)) return;
+      requestAnimationFrame(() => {
+        document.querySelectorAll('.sb-card[data-status="live"]').forEach(card => {
+          const nums = card.querySelectorAll('.sb-num');
+          // flash both sides; the change is momentary and symmetric is fine
+          nums.forEach(n => {
+            n.classList.remove('flash');
+            void n.offsetWidth; // restart animation
+            n.classList.add('flash');
+            setTimeout(() => n.classList.remove('flash'), 950);
+          });
+        });
+        state.todayGames.forEach(g => { g._flash = false; });
+      });
     }
 
     async function renderToday(refresh) {
