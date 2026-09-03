@@ -5,7 +5,7 @@ window.addEventListener('pageshow', e => {
 });
 
 // Version guard: if the cached HTML and JS disagree, reload once to resync.
-const JS_VERSION = 46;
+const JS_VERSION = 47;
 if (window.APP_VERSION && window.APP_VERSION !== JS_VERSION && !sessionStorage.getItem('vresync')) {
   sessionStorage.setItem('vresync', '1');
   location.reload();
@@ -203,7 +203,7 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
     }
 
     function changeLeagueHtml() {
-      return `<div class="picker-current">League: <b>${currentLeagueName()}</b> <span class="link" data-change-league>Change</span></div>`;
+      return `<div class="picker-current">League: <b>${esc(currentLeagueName())}</b> <span class="link" data-change-league>Change</span></div>`;
     }
 
     // ---- Players-tab division filter (independent of main league selection) ----
@@ -828,7 +828,7 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
     // like "Team Blue vs Team Red". Real rosters don't exist behind those, so
     // render them as muted non-links so they don't look like a data bug.
     function isScrimmageTeam(n) {
-      return /^team\\s+(blue|red|white|black|grey|gray|gold|green|navy|silver|teal|orange|yellow|purple|home|away)$/i.test((n || '').trim());
+      return /^team\s+(blue|red|white|black|grey|gray|gold|green|navy|silver|teal|orange|yellow|purple|home|away)$/i.test((n || '').trim());
     }
     function isScrimmageGame(g) {
       return isScrimmageTeam(g.home) && isScrimmageTeam(g.away);
@@ -1188,13 +1188,13 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
 
       html += '<div id="leagueSecLeaders" class="league-sec" style="display:'+(active==='Leaders'?'block':'none')+'">';
       html += '<h3>Points</h3><table><thead><tr><th>Player</th><th>Team</th><th class="num">Pts</th></tr></thead><tbody>';
-      html += data.leaders.points.map(p => `<tr onclick="selectPlayer('${p.team_id}','${p.player_id}')" class="link"><td><span class="link">${p.name}</span></td><td>${p.team}</td><td class="num">${p.value}</td></tr>`).join('');
+      html += data.leaders.points.map(p => `<tr onclick="selectPlayer('${p.team_id}','${p.player_id}')" class="link"><td><span class="link">${esc(p.name)}</span></td><td>${esc(p.team)}</td><td class="num">${p.value}</td></tr>`).join('');
       html += '</tbody></table>';
       html += '<h3 style="margin-top:14px">Goals</h3><table><thead><tr><th>Player</th><th>Team</th><th class="num">G</th></tr></thead><tbody>';
-      html += data.leaders.goals.map(p => `<tr onclick="selectPlayer('${p.team_id}','${p.player_id}')" class="link"><td><span class="link">${p.name}</span></td><td>${p.team}</td><td class="num">${p.value}</td></tr>`).join('');
+      html += data.leaders.goals.map(p => `<tr onclick="selectPlayer('${p.team_id}','${p.player_id}')" class="link"><td><span class="link">${esc(p.name)}</span></td><td>${esc(p.team)}</td><td class="num">${p.value}</td></tr>`).join('');
       html += '</tbody></table>';
       html += '<h3 style="margin-top:14px">Assists</h3><table><thead><tr><th>Player</th><th>Team</th><th class="num">A</th></tr></thead><tbody>';
-      html += data.leaders.assists.map(p => `<tr onclick="selectPlayer('${p.team_id}','${p.player_id}')" class="link"><td><span class="link">${p.name}</span></td><td>${p.team}</td><td class="num">${p.value}</td></tr>`).join('');
+      html += data.leaders.assists.map(p => `<tr onclick="selectPlayer('${p.team_id}','${p.player_id}')" class="link"><td><span class="link">${esc(p.name)}</span></td><td>${esc(p.team)}</td><td class="num">${p.value}</td></tr>`).join('');
       html += '</tbody></table>';
       html += '</div>';
 
@@ -1554,7 +1554,7 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
         }
         html += changeLeagueHtml();
         html += '<select id="teamSelect"><option value="">Choose your team</option>';
-        state.teams.forEach(t => html += `<option value="${t.id}" ${t.id === state.teamId ? 'selected' : ''}>${t.name}</option>`);
+        state.teams.forEach(t => html += `<option value="${t.id}" ${t.id === state.teamId ? 'selected' : ''}>${esc(t.name)}</option>`);
         html += '</select>';
         html += '<div id="teamContent"></div></div>';
         setMainHtml(html);
@@ -2002,7 +2002,7 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
       html += '<h3>Standings by Points</h3>';
       html += data.standings.map(s => `
         <div style="margin-bottom:8px" onclick="selectTeam('${s.team_id}')">
-          <div style="display:flex;justify-content:space-between;font-size:13px"><span class="link">${s.team}</span><span>${s.pts} pts</span></div>
+          <div style="display:flex;justify-content:space-between;font-size:13px"><span class="link">${esc(s.team)}</span><span>${s.pts} pts</span></div>
           <div class="bar"><div class="fill gf" style="width:${(s.pts / maxPts * 100).toFixed(1)}%"></div></div>
         </div>`).join('');
 
@@ -2011,13 +2011,13 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
       html += '<h3 style="margin-top:18px">Goals For vs Against</h3>';
       html += data.standings.slice(0, 8).map(s => `
         <div style="margin-bottom:10px" onclick="selectTeam('${s.team_id}')">
-          <div style="display:flex;justify-content:space-between;font-size:13px"><span class="link">${s.team}</span><span><span style="color:var(--accent-2)">GF ${s.gf}</span> / <span style="color:var(--danger)">GA ${s.ga}</span></span></div>
+          <div style="display:flex;justify-content:space-between;font-size:13px"><span class="link">${esc(s.team)}</span><span><span style="color:var(--accent-2)">GF ${s.gf}</span> / <span style="color:var(--danger)">GA ${s.ga}</span></span></div>
           <div class="bar" title="GF green, GA red"><div class="fill gf" style="width:${(s.gf / (s.gf + s.ga || 1) * 100).toFixed(1)}%"></div><div class="fill ga" style="width:${(s.ga / (s.gf + s.ga || 1) * 100).toFixed(1)}%"></div></div>
         </div>`).join('');
 
       // Top scorers
       html += '<h3 style="margin-top:18px">Top Scorers</h3><table><thead><tr><th>Player</th><th>Team</th><th class="num">Pts</th></tr></thead><tbody>';
-      html += data.leaders.points.map(p => `<tr class="link" onclick="selectPlayer('${p.team_id}','${p.player_id}')"><td><span class="link">${p.name}</span></td><td>${p.team}</td><td class="num">${p.value}</td></tr>`).join('');
+      html += data.leaders.points.map(p => `<tr class="link" onclick="selectPlayer('${p.team_id}','${p.player_id}')"><td><span class="link">${esc(p.name)}</span></td><td>${esc(p.team)}</td><td class="num">${p.value}</td></tr>`).join('');
       html += '</tbody></table></div>';
 
       setMainHtml(html);
@@ -2506,10 +2506,23 @@ if ($ver) $ver.textContent = 'v' + JS_VERSION;
     }
 
     let kpalLookupSeq = 0;
+    let kpalLookupCtrl = null;
     async function kpalServerLookup(query) {
       const seq = ++kpalLookupSeq;
+      // Own controller on purpose: lookupPlayers() shares one AbortController
+      // with the Players-tab typeahead, so borrowing it would let the palette
+      // and the tab search abort each other mid-flight (stuck lookups).
+      if (kpalLookupCtrl) kpalLookupCtrl.abort();
+      kpalLookupCtrl = new AbortController();
       try {
-        const result = await lookupPlayers(query);
+        const timer = setTimeout(() => kpalLookupCtrl.abort(), 45000);
+        const res = await fetch('/api/players/lookup?q=' + encodeURIComponent(query), {
+          signal: kpalLookupCtrl.signal,
+          cache: 'no-store',
+        });
+        clearTimeout(timer);
+        if (seq !== kpalLookupSeq || !kpal.open) return;
+        const result = await res.json();
         if (seq !== kpalLookupSeq || !kpal.open) return;
         if (kpal.q.value.trim().toLowerCase() !== query.trim().toLowerCase()) return;
         const hits = (result && result.players) || [];

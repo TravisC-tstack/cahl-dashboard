@@ -97,7 +97,14 @@ def _extract_id(href, field):
     if not href:
         return None
     m = re.search(rf"{field}=([^&\"]+)", href)
-    return m.group(1) if m else None
+    if not m:
+        return None
+    val = m.group(1)
+    # IDs flow into onclick="selectTeam('...')" templates in app.js; only
+    # alphanumerics ever appear in real chillerstats IDs (opaque tokens run
+    # 32-128 chars). Dropping anything else keeps quotes/HTML out of
+    # attribute context at the source.
+    return val if re.fullmatch(r"[A-Za-z0-9_-]{1,200}", val) else None
 
 
 def _query_token(href):
@@ -106,7 +113,7 @@ def _query_token(href):
         return None
     q = href.split("?", 1)[1].split("#", 1)[0]
     first = q.split("&")[0].strip()
-    if first and "=" not in first:
+    if first and "=" not in first and re.fullmatch(r"[A-Za-z0-9_-]{1,200}", first):
         return first
     return None
 
@@ -1096,18 +1103,29 @@ def enrich_today_scores(home_data, max_workers=8, league_ids=None, timeout=None,
     if missing:
         team_ids = {tid for g in missing for tid in (g.get("home_id"), g.get("away_id")) if tid}
         schedules = {}
+        import threading as _threading
+        sched_lock = _threading.Lock()
 
         def fetch(tid):
             sched, e = parse_team_schedule(tid, fresh=fresh)
             if not e and sched:
-                schedules[tid] = sched
+                with sched_lock:
+                    schedules[tid] = sched
 
-        with cf.ThreadPoolExecutor(max_workers=max_workers) as ex:
-            list(ex.map(fetch, team_ids))
+        # Soft-timed like phase 1 — `list(ex.map(...))` joined every worker
+        # with no cap, so one slow wave of schedule pages could stall the
+        # whole scores endpoint past Vercel's function limit.
+        phase2_timeout = min(timeout, 25) if timeout else 25
+        ex = cf.ThreadPoolExecutor(max_workers=max_workers)
+        futs = [ex.submit(fetch, tid) for tid in team_ids]
+        cf.wait(futs, timeout=phase2_timeout)
+        ex.shutdown(wait=False, cancel_futures=True)
+        with sched_lock:
+            schedules_snapshot = dict(schedules)
 
         for g in missing:
             for tid in (g.get("home_id"), g.get("away_id")):
-                for sch in schedules.get(tid, []):
+                for sch in schedules_snapshot.get(tid, []):
                     if sch["date"] != today_label or not sch.get("played"):
                         continue
                     if {sch.get("home_id"), sch.get("away_id")} == ids_of(g):

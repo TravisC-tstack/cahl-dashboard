@@ -1,0 +1,21 @@
+{
+ "team": {
+  "ms": 383,
+  "items": 1
+ },
+ "player": {
+  "ms": 692,
+  "items": 10
+ },
+ "palette": {
+  "ms": 1125,
+  "items": 1
+ },
+ "runtime": {
+  "jsErrors": [],
+  "consoleErrors": [],
+  "badResources": [],
+  "longTasks": [],
+  "visErr": false
+ }
+}

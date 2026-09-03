@@ -1,5 +1,6 @@
 import os
 import socket
+import time
 import concurrent.futures
 from flask import Flask, jsonify, render_template, request
 
@@ -54,14 +55,16 @@ def today():
     return jsonify(data)
 
 
-@app.route("/api/today/scores")
-def today_scores():
-    """Live/final scores for today's games (separate slower path).
-    Uses the warm teams cache to fetch only game-night dashboards; cold starts
-    fall back to all leagues, soft-timed so the endpoint always answers."""
+_SCORES_COND = __import__("threading").Condition()
+_SCORES_FLIGHT = {"result": None, "ts": 0.0, "inflight": False, "gen": 0}
+_SCORES_MEMO_S = 20  # serve cached result to pollers within this window
+
+
+def _today_scores_compute():
+    """Shared body: parse homepage + enrich with live scores. Raises on hard error."""
     data, err = scraper.parse_homepage()
     if err:
-        return jsonify({"error": err}), 502
+        raise RuntimeError(err)
     try:
         league_ids = None
         if _TEAMS_CACHE["data"]:
@@ -76,7 +79,50 @@ def today_scores():
         scraper.enrich_today_scores(data, league_ids=league_ids, timeout=45, fresh=True)
     except Exception as e:
         print(f"[today_scores] enrich failed: {e}")  # never swallow silently
-    return jsonify({"games": data.get("today", [])})
+    return {"games": data.get("today", [])}
+
+
+@app.route("/api/today/scores")
+def today_scores():
+    """Live/final scores for today's games (separate slower path).
+    Single-flight: the first requester computes; concurrent pollers wait for
+    that result (or reuse a fresh one) instead of stampeding the source site —
+    the stampede is what made live scores stick for everyone at once."""
+    now = time.time()
+    my_gen = None
+    with _SCORES_COND:
+        if (_SCORES_FLIGHT["result"] is not None
+                and now - _SCORES_FLIGHT["ts"] < _SCORES_MEMO_S):
+            return jsonify(_SCORES_FLIGHT["result"])
+        if _SCORES_FLIGHT["inflight"]:
+            my_gen = _SCORES_FLIGHT["gen"]
+            # Wait up to ~55s for the in-flight computation to land.
+            _SCORES_COND.wait(timeout=55)
+            f = _SCORES_FLIGHT
+            if (f["result"] is not None and f["gen"] != my_gen
+                    and time.time() - f["ts"] < 90):
+                return jsonify(f["result"])
+            # Timed out or stale — fall through and compute our own.
+            if _SCORES_FLIGHT["inflight"]:
+                my_gen = None  # we'll compute; first-completed wins the memo
+        if my_gen is None:
+            _SCORES_FLIGHT["inflight"] = True
+            _SCORES_FLIGHT["gen"] += 1
+    try:
+        payload = _today_scores_compute()
+    except RuntimeError as e:
+        with _SCORES_COND:
+            if _SCORES_FLIGHT["inflight"]:
+                _SCORES_FLIGHT["inflight"] = False
+                _SCORES_COND.notify_all()
+        return jsonify({"error": str(e)}), 502
+    with _SCORES_COND:
+        _SCORES_FLIGHT["result"] = payload
+        _SCORES_FLIGHT["ts"] = time.time()
+        _SCORES_FLIGHT["inflight"] = False
+        _SCORES_FLIGHT["gen"] += 1
+        _SCORES_COND.notify_all()
+    return jsonify(payload)
 
 
 @app.route("/api/leaders")
@@ -246,6 +292,8 @@ def teams():
 
 _PLAYERS_CACHE = {"data": None, "ts": 0, "partial": False}
 _PLAYERS_TTL = 3600  # 1 hour; matches the hourly cron baseline that re-warms it.
+_PLAYERS_COND = __import__("threading").Condition()
+_PLAYERS_FLIGHT = {"inflight": False, "t0": 0.0, "waiters": 0}
 
 
 def _merge_player_index(entries):
@@ -305,12 +353,38 @@ def players():
             and not _PLAYERS_CACHE.get("partial")):
         return jsonify({"players": _PLAYERS_CACHE["data"], "partial": False})
 
+    # Single-flight: one rebuild at a time; concurrent requests wait for the
+    # in-flight rebuild instead of each fanning out to ~60 rosters (the
+    # stampede is what made the leaderboard stick for everyone at once).
+    with _PLAYERS_COND:
+        if _PLAYERS_FLIGHT["inflight"] and now - _PLAYERS_FLIGHT["t0"] < 115:
+            _PLAYERS_FLIGHT["waiters"] += 1
+            _PLAYERS_COND.wait(timeout=110)
+            _PLAYERS_FLIGHT["waiters"] -= 1
+            c = _PLAYERS_CACHE
+            if (c["data"] is not None and time.time() - c["ts"] < _PLAYERS_TTL
+                    and not c.get("partial")):
+                return jsonify({"players": c["data"], "partial": False})
+            # timed out without a complete cache — compute our own below
+        _PLAYERS_FLIGHT["inflight"] = True
+        _PLAYERS_FLIGHT["t0"] = time.time()
+    try:
+        return _players_rebuild(now)
+    finally:
+        with _PLAYERS_COND:
+            _PLAYERS_FLIGHT["inflight"] = False
+            _PLAYERS_COND.notify_all()
+
+
+def _players_rebuild(now):
+    from concurrent.futures import ThreadPoolExecutor
     teams_data, err = _all_teams_cached()
     if err:
         return jsonify({"error": err}), 502
 
     index = {}
     errors = []
+    idx_lock = __import__("threading").Lock()
 
     def fetch(team):
         try:
@@ -321,7 +395,10 @@ def players():
         if e:
             errors.append(e)
             return
-        scraper.index_roster(team, roster, index)
+        # Workers can still be running when the soft timeout fires and the
+        # main thread sorts/serializes `index` — guard it like search does.
+        with idx_lock:
+            scraper.index_roster(team, roster, index)
 
     # Keep this well under the function limit so the UI can clear loading.
     # ?full=1 (cron warm) gets a much longer window to finish every roster.
@@ -338,10 +415,21 @@ def players():
             return jsonify({"players": cached, "partial": True, "error": "; ".join(errors[:3])})
         return jsonify({"error": "; ".join(errors[:3]), "players": []}), 502
 
-    data = sorted(index.values(), key=lambda p: p["name"].lower())
-    _PLAYERS_CACHE["data"] = data
-    _PLAYERS_CACHE["ts"] = now
-    _PLAYERS_CACHE["partial"] = not complete
+    # Snapshot under the lock: stragglers from timed-out futures may still be
+    # inserting while we sort — "dictionary changed size during iteration" 500.
+    with idx_lock:
+        snapshot = list(index.values())
+    data = sorted(snapshot, key=lambda p: p["name"].lower())
+    # Never cache an empty result as "complete" — one bad cycle would poison
+    # lookups and the leaderboard for the whole TTL.
+    if data:
+        _PLAYERS_CACHE["data"] = data
+        _PLAYERS_CACHE["ts"] = now
+        _PLAYERS_CACHE["partial"] = not complete
+    elif not complete:
+        cached = _PLAYERS_CACHE.get("data") or []
+        if cached:
+            return jsonify({"players": cached, "partial": True})
     return jsonify({
         "players": data,
         "partial": not complete,
